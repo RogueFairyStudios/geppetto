@@ -14,6 +14,7 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
 
 #: libs/versioning/KisVersioningFileRules.cpp
+#: plugins/dockers/projectsdocker/ProjectsModel.cpp
 msgid "1 file changed"
 msgid_plural "%1 files changed"
 msgstr[0] "1 arquivo alterado"
@@ -95,3 +96,116 @@ msgstr "Versões guardadas em uma pasta não oferecem suporte a esta operação.
 #, kde-format
 msgid "The versions kept in %1 are being used by another program. Try again in a moment."
 msgstr "As versões guardadas em %1 estão sendo usadas por outro programa. Tente de novo em instantes."
+
+#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+msgid "Projects"
+msgstr "Projetos"
+
+#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+msgid "Projects are not available in this installation."
+msgstr "Os projetos não estão disponíveis nesta instalação."
+
+#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+msgid "Server address"
+msgstr "Endereço do servidor"
+
+#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+msgid "Sign in"
+msgstr "Entrar"
+
+#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+#, kde-format
+msgid "%1 · signed in"
+msgstr "%1 · sessão ativa"
+
+#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+msgid "Add folder…"
+msgstr "Adicionar pasta…"
+
+#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+msgid "Choose a project folder"
+msgstr "Escolha a pasta do projeto"
+
+#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+msgid "Notes (optional)"
+msgstr "Notas (opcional)"
+
+#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+msgid "Synchronize"
+msgstr "Sincronizar"
+
+#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+msgid "1 open document will be saved"
+msgid_plural "%1 open documents will be saved"
+msgstr[0] "1 documento aberto será salvo"
+msgstr[1] "%1 documentos abertos serão salvos"
+
+#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+msgid "pending upload"
+msgstr "pendente de envio"
+
+#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+#, kde-format
+msgid "Both versions of %1 were kept"
+msgstr "As duas versões de %1 foram mantidas"
+
+#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+#, kde-format
+msgid ""
+"%1 was replaced by the other version while you kept working. Save your work "
+"under another name."
+msgstr ""
+"%1 foi trocado pela outra versão enquanto você continuava trabalhando. Salve "
+"o seu trabalho com outro nome."
+
+#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+msgid "Sign in again to send your work"
+msgstr "Entre de novo para enviar o seu trabalho"
+
+#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+msgid "Conflict resolved"
+msgstr "Conflito resolvido"
+
+#: plugins/dockers/projectsdocker/ProjectsModel.cpp
+msgid "changed"
+msgstr "alterado"
+
+#: plugins/dockers/projectsdocker/ProjectsModel.cpp
+msgid "new"
+msgstr "novo"
+
+#: plugins/dockers/projectsdocker/ProjectsModel.cpp
+msgid "removed"
+msgstr "removido"
+
+#: plugins/dockers/projectsdocker/ProjectsModel.cpp
+#, kde-format
+msgid "%1 editing"
+msgstr "%1 editando"
+
+#: plugins/dockers/projectsdocker/ProjectsModel.cpp
+msgid "conflict to resolve"
+msgstr "conflito a resolver"
+
+#: plugins/dockers/projectsdocker/ProjectsModel.cpp
+msgid "Folder not found"
+msgstr "Pasta não encontrada"
+
+#: plugins/dockers/projectsdocker/ProjectsModel.cpp
+msgid "1 update"
+msgid_plural "%1 updates"
+msgstr[0] "1 atualização"
+msgstr[1] "%1 atualizações"
+
+#: plugins/dockers/projectsdocker/ProjectsModel.cpp
+msgid "No changes"
+msgstr "Nenhuma alteração"
+
+#: plugins/dockers/projectsdocker/ProjectsModel.cpp
+#, kde-format
+msgid ""
+"%1 has work that was not sent yet. Synchronize before removing it from your "
+"choice."
+msgstr ""
+"%1 tem trabalho que ainda não foi enviado. Sincronize antes de tirar a pasta "
+"da sua escolha."

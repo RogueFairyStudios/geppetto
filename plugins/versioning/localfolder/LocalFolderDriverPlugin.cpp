@@ -8,6 +8,7 @@
 
 #include <KisVersioningDriver.h>
 #include <KisVersioningDriverRegistry.h>
+#include <KisVersioningTranslations.h>
 
 #include "LocalFolderDriver.h"
 
@@ -40,6 +41,7 @@ public:
 LocalFolderDriverPlugin::LocalFolderDriverPlugin(QObject *parent, const QVariantList &)
     : QObject(parent)
 {
+    KisVersioning::registerTranslations();
     // The registry owns the factory.
     KisVersioningDriverRegistry::instance()->add(new LocalFolderDriverFactory());
 }

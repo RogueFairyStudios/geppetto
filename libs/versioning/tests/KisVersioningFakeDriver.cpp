@@ -13,6 +13,7 @@ KisVersioningFakeDriver::KisVersioningFakeDriver(QObject *parent)
 {
     m_status.result = QVariant::fromValue(ProjectStatus());
     m_editing.result = QVariant::fromValue(QVector<EditingInfo>());
+    m_listProjects.result = QVariant::fromValue(QVector<ProjectInfo>());
 }
 
 KisVersioningFakeDriver::Outcome KisVersioningFakeDriver::failure(KisVersioningJob::Error error, const QString &text)
@@ -77,6 +78,37 @@ void KisVersioningFakeDriver::setTheirContent(const QString &path, const QByteAr
 
 void KisVersioningFakeDriver::setSharedLog(QStringList *log) { m_sharedLog = log; }
 
+void KisVersioningFakeDriver::setSignInError(KisVersioningJob::Error error, const QString &text)
+{
+    m_signIn = failure(error, text);
+}
+
+void KisVersioningFakeDriver::setProjects(const QVector<ProjectInfo> &projects)
+{
+    m_listProjects = Outcome();
+    m_listProjects.result = QVariant::fromValue(projects);
+}
+
+void KisVersioningFakeDriver::setListProjectsError(KisVersioningJob::Error error, const QString &text)
+{
+    m_listProjects = failure(error, text);
+}
+
+void KisVersioningFakeDriver::setProjectFolders(const QString &projectId, const QStringList &folders)
+{
+    m_projectFolders.insert(projectId, folders);
+}
+
+void KisVersioningFakeDriver::setDownloadError(KisVersioningJob::Error error, const QString &text)
+{
+    m_download = failure(error, text);
+}
+
+void KisVersioningFakeDriver::setSetFoldersError(KisVersioningJob::Error error, const QString &text)
+{
+    m_setFolders = failure(error, text);
+}
+
 const QList<KisVersioningFakeDriver::Call> &KisVersioningFakeDriver::calls() const { return m_calls; }
 
 int KisVersioningFakeDriver::callCount(const QString &name) const
@@ -130,7 +162,7 @@ void KisVersioningFakeDriver::setCurrentUserHook(const std::function<void()> &ho
 KisVersioningJob *KisVersioningFakeDriver::signIn(const QString &serverAddress)
 {
     record(QStringLiteral("signIn"), {serverAddress});
-    return makeJob(Outcome());
+    return makeJob(m_signIn);
 }
 
 KisVersioningJob *KisVersioningFakeDriver::signOut()
@@ -142,16 +174,14 @@ KisVersioningJob *KisVersioningFakeDriver::signOut()
 KisVersioningJob *KisVersioningFakeDriver::listProjects(const QString &serverAddress)
 {
     record(QStringLiteral("listProjects"), {serverAddress});
-    Outcome outcome;
-    outcome.result = QVariant::fromValue(QVector<ProjectInfo>());
-    return makeJob(outcome);
+    return makeJob(m_listProjects);
 }
 
 KisVersioningJob *KisVersioningFakeDriver::listFolders(const ProjectInfo &project)
 {
     record(QStringLiteral("listFolders"), {project.id});
     Outcome outcome;
-    outcome.result = QVariant::fromValue(QStringList());
+    outcome.result = QVariant::fromValue(m_projectFolders.value(project.id));
     return makeJob(outcome);
 }
 
@@ -159,13 +189,19 @@ KisVersioningJob *KisVersioningFakeDriver::downloadProject(const ProjectInfo &pr
                                                            const QStringList &folders)
 {
     record(QStringLiteral("downloadProject"), {project.id, localPath, folders.join(QLatin1Char(','))});
-    return makeJob(Outcome());
+    if (m_download.error == KisVersioningJob::NoError) {
+        QDir().mkpath(localPath);
+        for (const QString &folder : folders) {
+            QDir(localPath).mkpath(folder);
+        }
+    }
+    return makeJob(m_download);
 }
 
 KisVersioningJob *KisVersioningFakeDriver::setFolders(const QString &localPath, const QStringList &folders)
 {
     record(QStringLiteral("setFolders"), {localPath, folders.join(QLatin1Char(','))});
-    return makeJob(Outcome());
+    return makeJob(m_setFolders);
 }
 
 KisVersioningJob *KisVersioningFakeDriver::status(const QString &localPath)

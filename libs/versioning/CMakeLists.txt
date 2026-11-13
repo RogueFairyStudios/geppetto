@@ -11,6 +11,7 @@ set(kritaversioning_LIB_SRCS
     KisVersioningConflictMarkers.cpp
     KisVersioningSyncSession.cpp
     KisVersioningSettings.cpp
+    KisVersioningTranslations.cpp
 )
 
 kis_add_library(kritaversioning SHARED ${kritaversioning_LIB_SRCS})
@@ -24,6 +25,8 @@ target_link_libraries(kritaversioning
         KF${KF_MAJOR}::ConfigCore
         Qt${QT_MAJOR_VERSION}::Core
         Qt${QT_MAJOR_VERSION}::Concurrent
+    PRIVATE
+        kritaresources
 )
 
 set_target_properties(kritaversioning PROPERTIES

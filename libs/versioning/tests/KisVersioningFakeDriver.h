@@ -51,6 +51,15 @@ public:
     void setCurrentUserHook(const std::function<void()> &hook);
     /// When set, every call also appends "driver:<name> <args>" to @p log, so a test can order driver and host calls.
     void setSharedLog(QStringList *log);
+    void setSignInError(KisVersioningJob::Error error, const QString &text = QString());
+    /// What listProjects() returns; by default no project.
+    void setProjects(const QVector<KisVersioning::ProjectInfo> &projects);
+    void setListProjectsError(KisVersioningJob::Error error, const QString &text = QString());
+    /// What listFolders() returns for the project with @p projectId; by default no folder.
+    void setProjectFolders(const QString &projectId, const QStringList &folders);
+    /// A successful downloadProject() creates the local folder and the chosen folders in it.
+    void setDownloadError(KisVersioningJob::Error error, const QString &text = QString());
+    void setSetFoldersError(KisVersioningJob::Error error, const QString &text = QString());
 
     // Recording
     const QList<Call> &calls() const;
@@ -97,6 +106,11 @@ private:
     Outcome m_editing;
     Outcome m_announce;
     Outcome m_resolve;
+    Outcome m_signIn;
+    Outcome m_listProjects;
+    Outcome m_download;
+    Outcome m_setFolders;
+    QHash<QString, QStringList> m_projectFolders;
     QHash<QString, QByteArray> m_theirContent;
     std::function<void()> m_userHook;
     QStringList *m_sharedLog {nullptr};
