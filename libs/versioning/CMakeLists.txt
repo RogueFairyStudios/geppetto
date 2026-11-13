@@ -9,6 +9,7 @@ set(kritaversioning_LIB_SRCS
     KisVersioningDriverRegistry.cpp
     KisVersioningFileRules.cpp
     KisVersioningConflictMarkers.cpp
+    KisVersioningSyncSession.cpp
 )
 
 kis_add_library(kritaversioning SHARED ${kritaversioning_LIB_SRCS})

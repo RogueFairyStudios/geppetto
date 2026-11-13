@@ -36,6 +36,12 @@ QString conflictCopyName(const QString &fileName, const QString &userName, const
     QString user = userName;
     user.replace(forbidden, QStringLiteral("_"));
 
+    // Windows and macOS file systems ignore case, so the names are compared that way.
+    QStringList taken;
+    for (const QString &name : existingNames) {
+        taken << name.toLower();
+    }
+
     for (int number = user.isEmpty() ? 2 : 1;; ++number) {
         QString candidate;
         if (user.isEmpty()) {
@@ -46,7 +52,7 @@ QString conflictCopyName(const QString &fileName, const QString &userName, const
             // "botao (Bruno) 2.kra": the number goes after the closing parenthesis.
             candidate = QStringLiteral("%1 (%2) %3%4").arg(base, user).arg(number).arg(extension);
         }
-        if (!existingNames.contains(candidate)) {
+        if (!taken.contains(candidate.toLower())) {
             return candidate;
         }
     }

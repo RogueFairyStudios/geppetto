@@ -35,6 +35,7 @@ void KisVersioningFileRulesTest::testConflictCopyName()
     using namespace KisVersioning;
     QCOMPARE(conflictCopyName("botao.kra", "Bruno", {}), QString("botao (Bruno).kra"));
     QCOMPARE(conflictCopyName("botao.kra", "Bruno", {"botao (Bruno).kra"}), QString("botao (Bruno) 2.kra"));
+    QCOMPARE(conflictCopyName("botao.kra", "Bruno", {"Botao (Bruno).kra"}), QString("botao (Bruno) 2.kra"));
     QCOMPARE(conflictCopyName("botao.kra", "Bruno", {"botao (Bruno).kra", "botao (Bruno) 2.kra"}),
              QString("botao (Bruno) 3.kra"));
     QCOMPARE(conflictCopyName(QString::fromUtf8("ícone novo.kra"), QString::fromUtf8("Ana Lúcia"), {}),

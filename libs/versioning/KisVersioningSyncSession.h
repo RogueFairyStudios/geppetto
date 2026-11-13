@@ -1,0 +1,103 @@
+/*
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ */
+#ifndef KISVERSIONINGSYNCSESSION_H
+#define KISVERSIONINGSYNCSESSION_H
+
+#include <QList>
+#include <QObject>
+#include <QVector>
+#include <QString>
+#include <QStringList>
+
+#include "KisVersioningDriver.h"
+#include "KisVersioningJob.h"
+#include "KisVersioningTypes.h"
+#include "kritaversioning_export.h"
+
+/**
+ * What the session needs to know about the documents open in the application.
+ */
+class KRITAVERSIONING_EXPORT KisVersioningDocumentHost
+{
+public:
+    virtual ~KisVersioningDocumentHost();
+    /// Open documents of the project that have unsaved changes. Absolute paths.
+    virtual QStringList modifiedOpenDocuments(const QString &projectPath) const = 0;
+    virtual bool saveDocument(const QString &absolutePath) = 0;
+    virtual bool isOpenAndUnmodified(const QString &absolutePath) const = 0;
+    virtual void reloadDocument(const QString &absolutePath) = 0;
+};
+
+/**
+ * One synchronisation of one project folder, from "the artist pressed
+ * synchronise" to a report. It drives a driver step by step from the
+ * finished() signal of each job, without nested event loops.
+ *
+ * The rule above all others: a locally changed file is never replaced or
+ * deleted unless its content exists in another version or in a copy. When
+ * both sides changed a file, the session keeps my content in a conflict copy
+ * (and a "conflict to resolve" marker) before it lets the driver take the
+ * other side's file. If the copy cannot be written, the file is left alone
+ * and the session ends with Failed.
+ *
+ * finished() is always emitted exactly once, never from inside start().
+ */
+class KRITAVERSIONING_EXPORT KisVersioningSyncSession : public QObject
+{
+    Q_OBJECT
+public:
+    struct Report {
+        QStringList sent;
+        QStringList received;
+        QStringList keptBoth;        ///< files where both sides changed; paths of the originals
+        QStringList conflictCopies;  ///< the copies that hold my content, one per entry of keptBoth
+        bool pendingUpload = false;  ///< something of mine is still not on the server
+        KisVersioningJob::Error error = KisVersioningJob::NoError;
+        QString errorText;
+    };
+
+    /// The most calls to driver->synchronise() in one session.
+    static const int MaxAttempts = 3;
+
+    KisVersioningSyncSession(KisVersioningDriver *driver, KisVersioningDocumentHost *host, QObject *parent = nullptr);
+    ~KisVersioningSyncSession() override;
+
+    /// Starts the session; does nothing if one is already running.
+    void start(const QString &projectPath, const QString &notes);
+
+Q_SIGNALS:
+    void progress(qint64 done, qint64 total, const QString &label);
+    void finished(const KisVersioningSyncSession::Report &report);
+
+private:
+    void synchroniseOnce();
+    void onSynchronised(KisVersioningJob *job);
+    void resolveNext();
+    void runResolve(const QString &path, KisVersioning::Resolution resolution);
+    void onResolved(KisVersioningJob *job);
+    void afterResolutions();
+    bool keepBoth(const QString &path, QString *copyPath, QString *errorText);
+    void endWithDriverError(KisVersioningJob *job);
+    void endWithError(KisVersioningJob::Error error, const QString &text);
+    void conclude();
+    void watch(KisVersioningJob *job);
+    bool wasSavedHere(const QString &absolutePath) const;
+
+    KisVersioningDriver *m_driver;
+    KisVersioningDocumentHost *m_host;
+    bool m_running {false};
+    QString m_projectPath;
+    QString m_notes;
+    int m_attempts {0};
+    bool m_serverChanged {false};
+    bool m_hadDivergence {false};
+    QVector<KisVersioning::Divergence> m_divergences;
+    int m_nextDivergence {0};
+    QStringList m_savedDocuments;
+    Report m_report;
+};
+
+Q_DECLARE_METATYPE(KisVersioningSyncSession::Report)
+
+#endif // KISVERSIONINGSYNCSESSION_H

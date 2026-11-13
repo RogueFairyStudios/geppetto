@@ -18,3 +18,13 @@ msgid "1 file changed"
 msgid_plural "%1 files changed"
 msgstr[0] "1 arquivo alterado"
 msgstr[1] "%1 arquivos alterados"
+
+#: libs/versioning/KisVersioningSyncSession.cpp
+#, kde-format
+msgid "Could not save %1 before synchronising."
+msgstr "Não foi possível salvar %1 antes de sincronizar."
+
+#: libs/versioning/KisVersioningSyncSession.cpp
+#, kde-format
+msgid "Could not keep a copy of %1, so it was left as it is."
+msgstr "Não foi possível guardar uma cópia de %1; o arquivo foi deixado como estava."
