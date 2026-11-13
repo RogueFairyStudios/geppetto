@@ -28,7 +28,18 @@ public:
     struct Result {
         QString projectPath;
         KisVersioningSyncSession::Report report;
+        /// staleDocuments() of the report, asked when the session ended.
+        QStringList staleDocuments;
     };
+
+    /**
+     * The files of @p report, received or kept both, whose open document has unsaved changes:
+     * such a document was not reloaded, so its window shows work built on the version that the
+     * file on disk no longer holds, and saving it would replace the other version. Paths are
+     * relative to the project, in the order of the report.
+     */
+    static QStringList staleDocuments(const QString &projectPath, const KisVersioningSyncSession::Report &report,
+                                      const KisVersioningDocumentHost &host);
 
     ProjectsSyncRunner(KisVersioningDriver *driver, KisVersioningDocumentHost *host, QObject *parent = nullptr);
     ~ProjectsSyncRunner() override;

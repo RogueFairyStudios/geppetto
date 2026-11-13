@@ -44,10 +44,18 @@ public:
     bool cancelRequested() const;
 
     /// For drivers. Emits progress() on the job's thread.
+    ///
+    /// The panels show @p label to the artist as it is: it must be translated, must not carry
+    /// messages of the backend, and must not use version control vocabulary. Raw backend text
+    /// goes to the log.
     void reportProgress(qint64 done, qint64 total, const QString &label);
     /// For drivers. Ends the job successfully; ignored if the job already ended.
     void finish(const QVariant &result = QVariant());
     /// For drivers. Ends the job with an error; ignored if the job already ended.
+    ///
+    /// The panels show @p text to the artist as it is: it must be translated, must not carry
+    /// messages of the backend, and must not use version control vocabulary. Raw backend text
+    /// goes to the log.
     void fail(Error error, const QString &text);
 
 Q_SIGNALS:

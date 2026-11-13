@@ -258,15 +258,13 @@ void ProjectsDock::onProjectSynchronised(int project)
     const ProjectsSyncRunner::Result result = m_runner->results().at(project);
     const KisVersioningSyncSession::Report &report = result.report;
     for (const QString &path : report.keptBoth) {
-        const QString name = QFileInfo(path).fileName();
-        m_syncMessages << i18n("Both versions of %1 were kept", name);
-        // Asked now, as the report arrives: a document with unsaved changes was not reloaded, so
-        // the window shows the artist's work while the file on disk holds the other version.
-        if (m_host->isOpenAndModified(QDir(result.projectPath).filePath(path))) {
-            m_syncMessages << i18n("%1 was replaced by the other version while you kept working. "
-                                   "Save your work under another name.",
-                                   name);
-        }
+        m_syncMessages << i18n("Both versions of %1 were kept", QFileInfo(path).fileName());
+    }
+    // Received or kept both while the document had unsaved changes: it was not reloaded.
+    for (const QString &path : result.staleDocuments) {
+        m_syncMessages << i18n("%1 was replaced by the other version while you kept working. "
+                               "Save your work under another name.",
+                               QFileInfo(path).fileName());
     }
     if (report.error == KisVersioningJob::NotSignedIn && (m_driver->capabilities() & SignIn)) {
         m_signedIn = false;

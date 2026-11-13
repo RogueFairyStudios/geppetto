@@ -9,6 +9,8 @@
 #include <vector>
 
 #include <QAbstractItemModel>
+#include <QHash>
+#include <QList>
 #include <QSet>
 #include <QStringList>
 #include <QVector>
@@ -28,8 +30,10 @@
  * The downloaded projects come from the settings. With a driver that has
  * RemoteProjects, the projects on the server join them, and the folders the
  * driver lists can be ticked: ticking downloads the folder, unticking removes
- * it from the choice. Files never synchronised and hidden folders (where the
- * drivers keep their own data) are not shown.
+ * it from the choice. A project takes one choice at a time; a choice made
+ * while the project is busy waits until the list shows the previous one.
+ * Files never synchronised and hidden folders (where the drivers keep their
+ * own data) are not shown.
  *
  * Every refresh reads the disk on a worker thread and asks the driver without
  * waiting; the model changes in one step when all the answers are in. It is
@@ -84,12 +88,24 @@ private:
     void apply(const Refresh &refresh);
     std::unique_ptr<Node> buildProject(int project) const;
 
+    /// A tick or an untick of a folder, as the artist made it.
+    struct Choice {
+        KisVersioning::ProjectInfo info;
+        QString folder;
+        bool chosen = false;
+    };
+
     Node *nodeAt(const QModelIndex &index) const;
     QString noticeFor(const Node *node) const;
     QString absolutePath(const Node *node) const;
-    bool hasUnsentWork(const Node *folder) const;
     bool chooseFolder(Node *folder, bool chosen);
+    bool startChoice(const Choice &choice);
+    void untick(const Choice &choice, const QString &localPath);
+    void startWaitingChoice(const QString &projectId);
+    bool storedProject(const QString &projectId, KisVersioningSettings::Project *project) const;
+    QString freeFolderFor(const KisVersioning::ProjectInfo &info) const;
     void runProjectJob(const QString &projectId, KisVersioningJob *job, const std::function<void()> &onSuccess);
+    void releaseAfterRefresh(const QString &projectId);
 
     KisVersioningDriver *m_driver;
     KisVersioningSettings *m_settings;
@@ -100,7 +116,10 @@ private:
     int m_changedFiles {0};
     int m_incoming {0};
     int m_pendingUpload {0};
-    QSet<QString> m_busyProjects;   ///< projects with a download or a change of folders under way
+    /// Projects with an operation under way, or whose operation the list does not show yet.
+    QSet<QString> m_busyProjects;
+    QHash<QString, QList<Choice>> m_waitingChoices;   ///< choices made while their project was busy
+    QHash<QString, QString> m_downloadTargets;        ///< project id to the folder a download is filling
 };
 
 #endif // PROJECTSMODEL_H

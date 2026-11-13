@@ -14,6 +14,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 
+#include <algorithm>
 #include <functional>
 
 #include <KSharedConfig>
@@ -27,7 +28,6 @@
 #include <KisVersioningSyncSession.h>
 
 #include "KisVersioningFakeDriver.h"
-#include "ProjectsDocumentHost.h"
 #include "ProjectsModel.h"
 #include "ProjectsSyncRunner.h"
 
@@ -158,6 +158,7 @@ class HeldSaves : public KisVersioningDocumentHost
 {
 public:
     QHash<QString, QStringList> modified;  ///< modified documents per project folder
+    QStringList openUnmodified;            ///< documents open without changes
     QList<std::function<void(bool)>> held;
 
     QStringList modifiedOpenDocuments(const QString &projectPath) const override
@@ -165,9 +166,60 @@ public:
         return modified.value(projectPath);
     }
     void saveDocument(const QString &, std::function<void(bool)> done) override { held.append(done); }
-    bool isOpenAndUnmodified(const QString &) const override { return false; }
+    bool isOpenAndUnmodified(const QString &path) const override { return openUnmodified.contains(path); }
     void reloadDocument(const QString &) override {}
 };
+
+/// A driver whose downloadProject() jobs only end when the test ends them.
+class HeldDownloadDriver : public KisVersioningFakeDriver
+{
+public:
+    QList<QPointer<KisVersioningJob>> held;
+    QStringList downloadedTo;
+
+    KisVersioningJob *downloadProject(const ProjectInfo &, const QString &localPath, const QStringList &folders) override
+    {
+        downloadedTo << localPath;
+        for (const QString &folder : folders) {
+            QDir(localPath).mkpath(folder);
+        }
+        auto *job = new KisVersioningJob(this);
+        held.append(job);
+        return job;
+    }
+};
+
+/// "game", downloaded with the folders "ui" and "art", from a driver with RemoteProjects.
+void addRemoteGame(Fixture &f)
+{
+    f.driver.setCapabilities(RemoteProjects | PartialDownload);
+    f.write(QStringLiteral("game/ui/botao.kra"));
+    f.write(QStringLiteral("game/art/heroi.kra"));
+    f.addProject(QStringLiteral("game"), {QStringLiteral("ui"), QStringLiteral("art")});
+    f.driver.setProjects({ProjectInfo{QStringLiteral("game"), QStringLiteral("game"), QString()}});
+    f.driver.setProjectFolders(QStringLiteral("game"), {QStringLiteral("art"), QStringLiteral("ui")});
+}
+
+/// Server projects that each offer the folder "ui".
+void serveProjects(KisVersioningFakeDriver &driver, const QVector<ProjectInfo> &projects)
+{
+    driver.setCapabilities(RemoteProjects | PartialDownload);
+    driver.setProjects(projects);
+    for (const ProjectInfo &project : projects) {
+        driver.setProjectFolders(project.id, {QStringLiteral("ui")});
+    }
+}
+
+/// Where each downloadProject() call put its project, in the order of the calls.
+QStringList downloadTargets(const KisVersioningFakeDriver &driver)
+{
+    QStringList targets;
+    const QList<KisVersioningFakeDriver::Call> calls = driver.callsNamed(QStringLiteral("downloadProject"));
+    for (const KisVersioningFakeDriver::Call &call : calls) {
+        targets << call.args.at(1);
+    }
+    return targets;
+}
 
 } // namespace
 
@@ -519,19 +571,14 @@ void ProjectsModelTest::testUntickingFolderNarrowsTheChoice()
 void ProjectsModelTest::testUntickingFolderWithUnsentWorkIsRefused()
 {
     Fixture f;
-    f.driver.setCapabilities(RemoteProjects | PartialDownload);
-    f.write(QStringLiteral("game/ui/botao.kra"));
-    f.write(QStringLiteral("game/art/heroi.kra"));
-    f.addProject(QStringLiteral("game"), {QStringLiteral("ui"), QStringLiteral("art")});
-    f.driver.setProjects({ProjectInfo{QStringLiteral("game"), QStringLiteral("game"), QString()}});
-    f.driver.setProjectFolders(QStringLiteral("game"), {QStringLiteral("art"), QStringLiteral("ui")});
+    addRemoteGame(f);
     f.driver.setStatus(statusWith(QStringLiteral("ui/botao.kra"), FileState::Modified));
     ProjectsModel model(&f.driver, &f.settings);
     QVERIFY(refreshAndWait(model));
 
     QSignalSpy failures(&model, &ProjectsModel::operationFailed);
-    QVERIFY(!model.setData(findPath(model, f.path(QStringLiteral("game/ui"))), Qt::Unchecked, Qt::CheckStateRole));
-    QCOMPARE(failures.size(), 1);
+    QVERIFY(model.setData(findPath(model, f.path(QStringLiteral("game/ui"))), Qt::Unchecked, Qt::CheckStateRole));
+    QVERIFY(failures.wait(5000));
     QCOMPARE(f.driver.callCount(QStringLiteral("setFolders")), 0);
     QCOMPARE(f.settings.projects().first().folders, (QStringList{QStringLiteral("ui"), QStringLiteral("art")}));
 
@@ -540,9 +587,191 @@ void ProjectsModelTest::testUntickingFolderWithUnsentWorkIsRefused()
     pending.pendingUpload = 1;
     f.driver.setStatus(pending);
     QVERIFY(refreshAndWait(model));
-    QVERIFY(!model.setData(findPath(model, f.path(QStringLiteral("game/art"))), Qt::Unchecked, Qt::CheckStateRole));
+    QVERIFY(model.setData(findPath(model, f.path(QStringLiteral("game/art"))), Qt::Unchecked, Qt::CheckStateRole));
+    QVERIFY(failures.wait(5000));
     QCOMPARE(failures.size(), 2);
     QCOMPARE(f.driver.callCount(QStringLiteral("setFolders")), 0);
+}
+
+void ProjectsModelTest::testUntickAsksForTheStatusAgain()
+{
+    Fixture f;
+    addRemoteGame(f);
+    ProjectsModel model(&f.driver, &f.settings);
+    QVERIFY(refreshAndWait(model));
+    QCOMPARE(findPath(model, f.path(QStringLiteral("game/ui/botao.kra"))).data(ProjectsModel::StateRole).toInt(),
+             int(FileState::Unchanged));
+
+    // The file changes after the last refresh, outside the application: the list does not know.
+    f.driver.setStatus(statusWith(QStringLiteral("ui/botao.kra"), FileState::Modified));
+    const int asked = f.driver.callCount(QStringLiteral("status"));
+    QSignalSpy failures(&model, &ProjectsModel::operationFailed);
+    QVERIFY(model.setData(findPath(model, f.path(QStringLiteral("game/ui"))), Qt::Unchecked, Qt::CheckStateRole));
+    QVERIFY(failures.wait(5000));
+
+    QCOMPARE(f.driver.callsNamed(QStringLiteral("status")).at(asked).args, QStringList{f.path(QStringLiteral("game"))});
+    QCOMPARE(f.driver.callCount(QStringLiteral("setFolders")), 0);
+    QCOMPARE(f.settings.projects().first().folders, (QStringList{QStringLiteral("ui"), QStringLiteral("art")}));
+}
+
+void ProjectsModelTest::testUntickGoesAheadWhenTheStatusIsClean()
+{
+    Fixture f;
+    addRemoteGame(f);
+    f.driver.setStatus(statusWith(QStringLiteral("ui/botao.kra"), FileState::Modified));
+    ProjectsModel model(&f.driver, &f.settings);
+    QVERIFY(refreshAndWait(model));
+    QCOMPARE(findPath(model, f.path(QStringLiteral("game/ui/botao.kra"))).data(ProjectsModel::StateRole).toInt(),
+             int(FileState::Modified));
+
+    // Synchronised since the last refresh: the status is clean now, whatever the list shows.
+    f.driver.setStatus(ProjectStatus());
+    QSignalSpy failures(&model, &ProjectsModel::operationFailed);
+    QVERIFY(model.setData(findPath(model, f.path(QStringLiteral("game/ui"))), Qt::Unchecked, Qt::CheckStateRole));
+    QTRY_COMPARE(f.driver.callCount(QStringLiteral("setFolders")), 1);
+    QCOMPARE(f.driver.callsNamed(QStringLiteral("setFolders")).first().args,
+             (QStringList{f.path(QStringLiteral("game")), QStringLiteral("art")}));
+    QTRY_COMPARE(f.settings.projects().first().folders, QStringList{QStringLiteral("art")});
+    QVERIFY(failures.isEmpty());
+}
+
+void ProjectsModelTest::testSecondTickWaitsForTheFirst()
+{
+    Fixture f;
+    HeldDownloadDriver driver;
+    serveProjects(driver, {ProjectInfo{QStringLiteral("p2"), QStringLiteral("Space"), QString()}});
+    driver.setProjectFolders(QStringLiteral("p2"), {QStringLiteral("art"), QStringLiteral("ui")});
+    ProjectsModel model(&driver, &f.settings);
+    QVERIFY(refreshAndWait(model));
+    const QModelIndex project = model.index(0, 0);
+
+    QVERIFY(model.setData(childNamed(model, project, QStringLiteral("ui")), Qt::Checked, Qt::CheckStateRole));
+    QCOMPARE(driver.held.size(), 1);
+
+    // The download ends; the refresh that would show it has not landed yet.
+    const QPointer<KisVersioningJob> download = driver.held.first();
+    download->finish();
+    QCoreApplication::sendPostedEvents(download, QEvent::MetaCall);
+    QCOMPARE(f.settings.projects().size(), 1);
+
+    // A second tick, on a list that still shows the project as not downloaded: it waits its turn.
+    QVERIFY(model.setData(childNamed(model, project, QStringLiteral("art")), Qt::Checked, Qt::CheckStateRole));
+    QCOMPARE(driver.downloadedTo.size(), 1);
+    QCOMPARE(driver.callCount(QStringLiteral("setFolders")), 0);
+
+    // Its turn comes once the list shows the download, and it keeps the first folder.
+    const QString localPath = f.path(QStringLiteral("projects/Space"));
+    QTRY_COMPARE(driver.callCount(QStringLiteral("setFolders")), 1);
+    QCOMPARE(driver.callsNamed(QStringLiteral("setFolders")).first().args,
+             (QStringList{localPath, QStringLiteral("ui,art")}));
+    QTRY_COMPARE(f.settings.projects().first().folders, (QStringList{QStringLiteral("ui"), QStringLiteral("art")}));
+    QCOMPARE(driver.downloadedTo, QStringList{localPath});
+    QCOMPARE(f.settings.projects().size(), 1);
+}
+
+void ProjectsModelTest::testDownloadFolderStaysInsideTheProjectsFolder()
+{
+    Fixture f;
+    serveProjects(f.driver, {ProjectInfo{QStringLiteral("dots"), QStringLiteral(".."), QString()},
+                             ProjectInfo{QStringLiteral("dot"), QStringLiteral("."), QString()},
+                             ProjectInfo{QStringLiteral("empty"), QString(), QString()},
+                             ProjectInfo{QStringLiteral("slash"), QStringLiteral("a/b"), QString()},
+                             ProjectInfo{QStringLiteral("backslash"), QStringLiteral("c\\d"), QString()}});
+    ProjectsModel model(&f.driver, &f.settings);
+    QVERIFY(refreshAndWait(model));
+    QCOMPARE(model.rowCount(), 5);
+    for (int row = 0; row < 5; ++row) {
+        QVERIFY(model.setData(childNamed(model, model.index(row, 0), QStringLiteral("ui")), Qt::Checked,
+                              Qt::CheckStateRole));
+    }
+    QTRY_COMPARE(f.driver.callCount(QStringLiteral("downloadProject")), 5);
+
+    const QString root = f.path(QStringLiteral("projects"));
+    const QStringList expected{root + QStringLiteral("/dots"), root + QStringLiteral("/dot"),
+                               root + QStringLiteral("/empty"), root + QStringLiteral("/a_b"),
+                               root + QStringLiteral("/c_d")};
+    QCOMPARE(downloadTargets(f.driver), expected);
+    for (const QString &target : expected) {
+        QCOMPARE(QFileInfo(target).absolutePath(), root);
+    }
+    // Nothing was made beside the projects folder.
+    QVERIFY(!QFileInfo::exists(f.path(QStringLiteral("ui"))));
+}
+
+void ProjectsModelTest::testSameNameGetsAFreeFolder()
+{
+    Fixture f;
+    serveProjects(f.driver, {ProjectInfo{QStringLiteral("p1"), QStringLiteral("Space"), QString()},
+                             ProjectInfo{QStringLiteral("p2"), QStringLiteral("Space"), QString()},
+                             ProjectInfo{QStringLiteral("p3"), QStringLiteral("Space"), QString()},
+                             ProjectInfo{QStringLiteral("p4"), QStringLiteral("Space"), QString()}});
+    ProjectsModel model(&f.driver, &f.settings);
+    QVERIFY(refreshAndWait(model));
+    const QString root = f.path(QStringLiteral("projects"));
+
+    // One after the other: the second finds the first in the settings.
+    QSignalSpy spy(&model, &ProjectsModel::refreshed);
+    QVERIFY(model.setData(childNamed(model, model.index(0, 0), QStringLiteral("ui")), Qt::Checked, Qt::CheckStateRole));
+    QVERIFY(spy.wait(5000));
+    QVERIFY(model.setData(childNamed(model, model.index(1, 0), QStringLiteral("ui")), Qt::Checked, Qt::CheckStateRole));
+    QVERIFY(spy.wait(5000));
+    QCOMPARE(downloadTargets(f.driver), (QStringList{root + QStringLiteral("/Space"), root + QStringLiteral("/Space (2)")}));
+
+    // At the same time: the second finds the first's download under way.
+    QVERIFY(model.setData(childNamed(model, model.index(2, 0), QStringLiteral("ui")), Qt::Checked, Qt::CheckStateRole));
+    QVERIFY(model.setData(childNamed(model, model.index(3, 0), QStringLiteral("ui")), Qt::Checked, Qt::CheckStateRole));
+    QTRY_COMPARE(f.settings.projects().size(), 4);
+    QCOMPARE(downloadTargets(f.driver).mid(2),
+             (QStringList{root + QStringLiteral("/Space (3)"), root + QStringLiteral("/Space (4)")}));
+}
+
+void ProjectsModelTest::testFolderInUseIsNotReused()
+{
+    Fixture f;
+    f.write(QStringLiteral("projects/Space/notes.txt"), "someone's notes");
+    QVERIFY(QDir().mkpath(f.path(QStringLiteral("projects/Empty"))));
+    serveProjects(f.driver, {ProjectInfo{QStringLiteral("p1"), QStringLiteral("Space"), QString()},
+                             ProjectInfo{QStringLiteral("p2"), QStringLiteral("Empty"), QString()}});
+    ProjectsModel model(&f.driver, &f.settings);
+    QVERIFY(refreshAndWait(model));
+
+    QVERIFY(model.setData(childNamed(model, model.index(0, 0), QStringLiteral("ui")), Qt::Checked, Qt::CheckStateRole));
+    QVERIFY(model.setData(childNamed(model, model.index(1, 0), QStringLiteral("ui")), Qt::Checked, Qt::CheckStateRole));
+    QTRY_COMPARE(f.settings.projects().size(), 2);
+
+    // A folder that holds something is left alone; an empty one is used.
+    const QString root = f.path(QStringLiteral("projects"));
+    QCOMPARE(downloadTargets(f.driver), (QStringList{root + QStringLiteral("/Space (2)"), root + QStringLiteral("/Empty")}));
+    QFile notes(f.path(QStringLiteral("projects/Space/notes.txt")));
+    QVERIFY(notes.open(QIODevice::ReadOnly));
+    QCOMPARE(notes.readAll(), QByteArray("someone's notes"));
+}
+
+void ProjectsModelTest::testOtherDriversProjectIsLeftAlone()
+{
+    Fixture f;
+    KisVersioningSettings::Project other;
+    other.driverId = QStringLiteral("localfolder");
+    other.info.id = f.path(QStringLiteral("projects/Space"));
+    other.info.name = QStringLiteral("Space");
+    other.localPath = f.path(QStringLiteral("projects/Space"));
+    f.settings.addProject(other);
+    serveProjects(f.driver, {ProjectInfo{QStringLiteral("p1"), QStringLiteral("Space"), QString()}});
+    ProjectsModel model(&f.driver, &f.settings);
+    QVERIFY(refreshAndWait(model));
+
+    QVERIFY(model.setData(childNamed(model, model.index(0, 0), QStringLiteral("ui")), Qt::Checked, Qt::CheckStateRole));
+    QTRY_COMPARE(f.settings.projects().size(), 2);
+
+    QCOMPARE(downloadTargets(f.driver), QStringList{f.path(QStringLiteral("projects/Space (2)"))});
+    const QVector<KisVersioningSettings::Project> projects = f.settings.projects();
+    const auto kept = std::find_if(projects.begin(), projects.end(), [](const KisVersioningSettings::Project &p) {
+        return p.driverId == QStringLiteral("localfolder");
+    });
+    QVERIFY(kept != projects.end());
+    QCOMPARE(kept->localPath, other.localPath);
+    QCOMPARE(kept->info.id, other.info.id);
+    QCOMPARE(kept->info.name, other.info.name);
 }
 
 void ProjectsModelTest::testConflictResolvedRemovesOnlyTheMarker()
@@ -662,21 +891,56 @@ void ProjectsModelTest::testRunnerGoesOnAfterAFailure()
     QVERIFY(runner.results().isEmpty());
 }
 
-void ProjectsModelTest::testPathKeyIgnoresSeparatorsAndCase()
+void ProjectsModelTest::testStaleDocumentsAreTheModifiedOnes()
 {
-    const QString path = QStringLiteral("C:/Work/Game/ui/botao.kra");
-    QCOMPARE(ProjectsDocumentHost::pathKey(QDir::toNativeSeparators(path)), ProjectsDocumentHost::pathKey(path));
-    QCOMPARE(ProjectsDocumentHost::pathKey(QStringLiteral("C:/Work/Game/art/../ui/botao.kra")),
-             ProjectsDocumentHost::pathKey(path));
+    const QString project = QStringLiteral("/work/game");
+    HeldSaves host;
+    QStringList modified{project + QStringLiteral("/ui/received-modified.kra")};
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
-    QCOMPARE(ProjectsDocumentHost::pathKey(QStringLiteral("c:/work/GAME/ui/Botao.kra")),
-             ProjectsDocumentHost::pathKey(path));
+    // The application may keep a path with other separators, and another case on these systems.
+    modified << QDir::toNativeSeparators(QStringLiteral("/WORK/game/ui/kept-modified.kra"));
+#else
+    modified << QDir::toNativeSeparators(project + QStringLiteral("/ui/kept-modified.kra"));
 #endif
-    QVERIFY(ProjectsDocumentHost::isInside(path, QStringLiteral("C:/Work/Game")));
-    QVERIFY(ProjectsDocumentHost::isInside(path, QStringLiteral("C:/Work/Game/")));
-    QVERIFY(ProjectsDocumentHost::isInside(QDir::toNativeSeparators(path), QStringLiteral("C:/Work/Game")));
-    QVERIFY(!ProjectsDocumentHost::isInside(QStringLiteral("C:/Work/Game2/ui/botao.kra"), QStringLiteral("C:/Work/Game")));
-    QVERIFY(!ProjectsDocumentHost::isInside(QString(), QStringLiteral("C:/Work/Game")));
+    host.modified.insert(project, modified);
+    host.openUnmodified << project + QStringLiteral("/ui/received-clean.kra")
+                        << project + QStringLiteral("/ui/kept-clean.kra");
+
+    KisVersioningSyncSession::Report report;
+    report.received = QStringList{QStringLiteral("ui/received-modified.kra"), QStringLiteral("ui/received-clean.kra"),
+                                  QStringLiteral("ui/received-not-open.kra")};
+    report.keptBoth = QStringList{QStringLiteral("ui/kept-modified.kra"), QStringLiteral("ui/kept-clean.kra"),
+                                  QStringLiteral("ui/kept-not-open.kra")};
+
+    // Received and modified, kept both and modified: warned. Unmodified or not open: not warned.
+    QCOMPARE(ProjectsSyncRunner::staleDocuments(project, report, host),
+             (QStringList{QStringLiteral("ui/received-modified.kra"), QStringLiteral("ui/kept-modified.kra")}));
+
+    host.modified.clear();
+    QVERIFY(ProjectsSyncRunner::staleDocuments(project, report, host).isEmpty());
+}
+
+void ProjectsModelTest::testRunnerReportsStaleDocuments()
+{
+    Fixture f;
+    QDir().mkpath(f.path(QStringLiteral("a")));
+    HeldSaves host;
+    host.modified.insert(f.path(QStringLiteral("a")), {f.path(QStringLiteral("a/ui/botao.kra"))});
+    SyncResult received;
+    received.received = QStringList{QStringLiteral("ui/botao.kra")};
+    f.driver.queueSyncResult(received);
+    ProjectsSyncRunner runner(&f.driver, &host);
+    QSignalSpy finished(&runner, &ProjectsSyncRunner::finished);
+
+    runner.start({f.path(QStringLiteral("a"))}, QString());
+    QTRY_COMPARE(host.held.size(), 1);
+    // Saved before synchronising, then changed again while the other version arrived.
+    host.held.takeFirst()(true);
+    QVERIFY(finished.wait(5000));
+
+    const ProjectsSyncRunner::Result result = runner.results().first();
+    QCOMPARE(result.report.received, QStringList{QStringLiteral("ui/botao.kra")});
+    QCOMPARE(result.staleDocuments, QStringList{QStringLiteral("ui/botao.kra")});
 }
 
 void ProjectsModelTest::testPluginRegistersThePanel()

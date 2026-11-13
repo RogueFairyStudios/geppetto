@@ -22,6 +22,11 @@
  * When synchronise() reports a divergence on a path, the working file at that
  * path still holds the caller's own content; resolve(..., Theirs, ...) swaps
  * it for the server's. fileHistory() returns versions from oldest to newest.
+ *
+ * The panels show the text a driver gives its jobs (the error text of fail()
+ * and the label of reportProgress()) to the artist as it is. That text must be
+ * translated, must not carry messages of the backend, and must not use
+ * version control vocabulary. Raw backend text goes to the log.
  */
 class KRITAVERSIONING_EXPORT KisVersioningDriver : public QObject
 {

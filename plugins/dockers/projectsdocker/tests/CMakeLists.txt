@@ -6,7 +6,6 @@ kis_add_test(
     ProjectsModelTest.cpp
     ../ProjectsModel.cpp
     ../ProjectsSyncRunner.cpp
-    ../ProjectsDocumentHost.cpp
     ${VERSIONING_TESTS_DIR}/KisVersioningFakeDriver.cpp
     TEST_NAME ProjectsModelTest
     LINK_LIBRARIES kritaversioning kritaui kritatestsdk
@@ -19,3 +18,12 @@ add_dependencies(ProjectsModelTest pofiles kritaprojectsdocker)
 target_compile_definitions(ProjectsModelTest PRIVATE
     GEPPETTO_LOCALE_DIR="${CMAKE_BINARY_DIR}/locale"
     PROJECTSDOCKER_PLUGIN_FILE="$<TARGET_FILE:kritaprojectsdocker>")
+
+# Works with real documents of the application, so it starts the application's resources.
+kis_add_test(
+    ProjectsDocumentHostTest.cpp
+    ../ProjectsDocumentHost.cpp
+    TEST_NAME ProjectsDocumentHostTest
+    LINK_LIBRARIES kritaversioning kritaui kritatestsdk
+)
+target_include_directories(ProjectsDocumentHostTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)

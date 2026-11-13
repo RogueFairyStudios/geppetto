@@ -30,13 +30,21 @@ private Q_SLOTS:
     void testTickingFolderDownloadsProject();
     void testUntickingFolderNarrowsTheChoice();
     void testUntickingFolderWithUnsentWorkIsRefused();
+    void testUntickAsksForTheStatusAgain();
+    void testUntickGoesAheadWhenTheStatusIsClean();
+    void testSecondTickWaitsForTheFirst();
+    void testDownloadFolderStaysInsideTheProjectsFolder();
+    void testSameNameGetsAFreeFolder();
+    void testFolderInUseIsNotReused();
+    void testOtherDriversProjectIsLeftAlone();
     void testConflictResolvedRemovesOnlyTheMarker();
     void testDestroyedWhileRefreshingIsSafe();
 
     void testRunnerWaitsForEachProject();
     void testRunnerGoesOnAfterAFailure();
+    void testStaleDocumentsAreTheModifiedOnes();
+    void testRunnerReportsStaleDocuments();
 
-    void testPathKeyIgnoresSeparatorsAndCase();
     void testPluginRegistersThePanel();
     void testTitleIsTranslated();
 };
