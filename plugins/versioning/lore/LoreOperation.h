@@ -21,6 +21,57 @@
 
 #include "LoreCall.h"
 
+/// How long the driver waits for the answer to a server check. Without network a check normally
+/// ends in about 2 s; right after the server went away any call can wait for minutes.
+constexpr int loreReachabilityWaitMs = 10000;
+
+/// How long the answer "the server did not answer" is reused before the server is checked again.
+/// That it answered is never reused: the network can go away in between, and the next call would
+/// wait for minutes.
+constexpr qint64 loreReachabilityReuseMs = 10000;
+
+/// The same, while the call of a check that passed its limit is still waiting in the library: the
+/// library cannot stop it, so checks are spaced out to keep such calls few.
+constexpr qint64 loreReachabilityReuseLingeringMs = 60000;
+
+/**
+ * What the driver knows about whether a server answers, per key (a project folder or a server
+ * address), from its server checks. Each check gets a number when it begins; only the newest
+ * check's answer is recorded, whatever order the answers come in. Used on the driver's thread.
+ */
+class LoreReachability
+{
+public:
+    enum class Decision {
+        Ask,          ///< no check under way and no recent "no": a new check is needed
+        Wait,         ///< the newest check is under way, within its limit: share its answer
+        Unreachable,  ///< the server did not answer lately
+    };
+
+    Decision decide(const QString &key) const;
+    /// A check begins. It becomes the one later operations wait for. Returns its number.
+    quint64 begin(const QString &key);
+    /// The check numbered @p check answered within its limit, or passed it (@p timedOut, and then
+    /// @p reachable is false). Recorded only when no newer check has begun.
+    void settle(const QString &key, quint64 check, bool reachable, bool timedOut);
+    /// The call of a check that passed its limit ended at last. Recorded only when no newer check
+    /// has begun since.
+    void lateEnd(const QString &key, quint64 check, bool reachable);
+    /// Calls of checks that passed their limit and still wait in the library.
+    int lingering(const QString &key) const;
+
+private:
+    struct Entry {
+        quint64 latest {0};      ///< number of the newest check begun
+        bool checking {false};   ///< the newest check has not answered yet
+        bool known {false};
+        bool reachable {false};
+        QElapsedTimer age;       ///< since the recorded answer
+        int lingering {0};
+    };
+    QHash<QString, Entry> m_entries;
+};
+
 /**
  * What the driver remembers during a session of the application, per project folder. It is only
  * a help: everything that matters is also in the library's own state on disk.
@@ -31,28 +82,11 @@ struct LoreMemory {
     /// Paths that Lore merged by itself and the artist chose to keep as they are on disk.
     QHash<QString, QSet<QString>> keptAfterMerge;
 
-    /// Whether the server answered, per project folder or server address, and when it was asked.
-    struct Reachability {
-        bool reachable {false};
-        QElapsedTimer age;
-        bool asking {false};   ///< a question to the server has not ended yet
-        QElapsedTimer askingSince;
-    };
-    QHash<QString, Reachability> reachability;
+    LoreReachability reachability;
+    /// The newest check per key, while it has not answered: operations that start meanwhile
+    /// share its answer.
+    QHash<QString, QPointer<QObject>> checks;
 };
-
-/// How long the answer that the server did not answer is reused before it is asked again. That
-/// it answered is never reused: the network can go away in between, and the next call would wait.
-constexpr qint64 loreReachabilityReuseMs = 10000;
-
-/// How long the driver waits for the server to answer the question whether it answers. Without
-/// network that question normally ends in about 2 s; right after the server went away it can wait
-/// for minutes, like any call.
-constexpr int loreReachabilityWaitMs = 10000;
-
-/// While a question gets no answer, nothing else asks for this long; then one more question may
-/// start, so that the end of an outage is noticed without waiting for the first question to end.
-constexpr qint64 loreQuestionRetryMs = 60000;
 
 /// What an operation takes from the driver when it starts, so that it does not need the driver
 /// to live on.
@@ -164,21 +198,39 @@ public:
 
     /**
      * A call with no network can wait for minutes and cannot be cancelled, so a call that needs
-     * the server first establishes that it answers. These run @p then when the server answers now,
-     * and otherwise end the job with Offline:
-     * - at once, when it did not answer less than loreReachabilityReuseMs ago, or when an earlier
-     *   question is still waiting;
-     * - after loreReachabilityWaitMs, when this question gets no answer. The question then goes on
-     *   in the library, which cannot stop it; no other question is asked until it ends or
-     *   loreQuestionRetryMs has passed.
+     * the server first checks that it answers. The check is bounded: @p onAnswer runs once, with
+     * the server's answer when it comes within loreReachabilityWaitMs, or with reachable false when
+     * it does not (the check's call then goes on in the library, which cannot stop it).
      *
-     * For the project's server: a status call on the project.
+     * An operation that starts while a check of the same server is under way, within its limit,
+     * shares that check's answer. An operation that starts while the server lately did not answer
+     * gets reachable false at once, without a call.
+     *
+     * @p onAnswer gets the status of the check's call too: a refusal that is not about the network
+     * (such as a sign-in that expired) comes with reachable false and that status.
      */
+    using Answer = std::function<void(bool reachable, int status, const QString &rawText)>;
+    /// For the project's server: a status call on the project.
+    void checkProjectServer(const Answer &onAnswer);
+    /// For a server named by address, for calls made outside a project: a listing of its projects.
+    /// With @p ownListing, a new check is made in any case and its events go to @p onEvent (the
+    /// operation needs the listing itself).
+    void checkServer(const QString &serverAddress, const Answer &onAnswer, bool ownListing = false,
+                     const EventHandler &onEvent = EventHandler());
+
+    /// The checks above, for an operation that cannot go on without the server: they run @p then
+    /// when the server answers, and otherwise end the job with Offline (or the error of the check's
+    /// refusal) and @p failText where no text of its own fits.
     void requireProjectServer(const std::function<void()> &then, const QString &failText);
-    /// For a server named by address, for calls made outside a project: a listing of its
-    /// projects, whose events go to @p onEvent when given.
-    void requireServer(const QString &serverAddress, const std::function<void()> &then, const QString &failText,
-                       const EventHandler &onEvent = EventHandler());
+    void requireServer(const QString &serverAddress, const std::function<void()> &then, const QString &failText);
+
+    /// Ends the job after a check without an answer: Offline, or the error of a refusal that is
+    /// not about the network. @p failText is used where no text of its own fits.
+    void endWithoutServer(int status, const QString &rawText, const QString &failText);
+
+    /// From now on every call of this operation runs with the library's offline option: it works
+    /// on what this computer has, and never waits for the network.
+    void setWorkOffline(bool offline);
 
     /// True, after ending the job with Cancelled, when the artist asked to stop. Checked between
     /// one call and the next: a call in flight always runs to its end.
@@ -199,19 +251,10 @@ public:
 
 private:
     void endAfterFlush(const std::function<void()> &end);
-    /// Ends the job with Offline, without asking, when the server named by @p key (a project folder
-    /// or a server address) did not answer less than loreReachabilityReuseMs ago, or a question to
-    /// it has been waiting for less than loreQuestionRetryMs.
-    bool stopIfRecentlyUnreachable(const QString &key, const QString &failText);
-    /// Remembers whether the server named by @p key answered.
-    void recordReachability(const QString &key, bool reachable);
-    /// True when the server named by @p key did not answer less than loreReachabilityReuseMs ago.
-    bool recentlyUnreachable(const QString &key) const;
-    /// The question of requireProjectServer() and requireServer(). @p readsStatus: the answer is
-    /// a status's remote_available; otherwise the call's own success.
-    void askServer(const QString &key, const LoreGlobals &globals, const LoreCall::Starter &starter, bool readsStatus,
-                   const std::function<void()> &then, const QString &failText, const EventHandler &onEvent);
+    void check(const QString &key, const LoreGlobals &globals, const LoreCall::Starter &starter, bool readsStatus,
+               bool own, const EventHandler &onEvent, const Answer &onAnswer);
 
+    bool m_workOffline {false};
     QPointer<KisVersioningJob> m_job;
     bool m_flushBeforeEnd {false};
     bool m_ending {false};

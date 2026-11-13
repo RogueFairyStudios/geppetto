@@ -48,9 +48,14 @@ private Q_SLOTS:
     void testSetFoldersRefusesUnsentVersion_data();
     void testSetFoldersRefusesUnsentVersion();
     void testOperationsWithoutNetworkEndOffline();
+    void testBackToBackOperationsShareTheServerCheck();
+    void testLateAnswerDoesNotOverwriteNewerState();
+    void testSynchroniseAndStatusWithoutNetwork();
 
 private:
     QString server() const;
+    /// Waits for every job, started together, so that none ends before its answer is listened to.
+    static QVector<Outcome> runTogether(const QVector<KisVersioningJob *> &jobs, int timeoutMs = 60000);
 
     QTemporaryDir m_loreData;
     KisVersioning::ProjectInfo m_project;   ///< the last project createProject() made

@@ -145,7 +145,8 @@ void LoreDriver::setOfflineForTesting(bool offline)
 {
     m_offline = offline;
     // What the server answered before belongs to the other mode.
-    m_memory->reachability.clear();
+    m_memory->reachability = LoreReachability();
+    m_memory->checks.clear();
 }
 
 void LoreDriver::setIdentityForTesting(const QString &identity)
@@ -269,16 +270,21 @@ KisVersioningJob *LoreDriver::listProjects(const QString &serverAddress)
         op->fail(KisVersioningJob::Failed, failText);
         return job;
     }
-    // The listing is itself the question whether the server answers, with its time limit.
+    // The listing is itself the server check, with its time limit; it is never shared, since this
+    // operation needs the listing.
     auto projects = std::make_shared<QVector<ProjectInfo>>();
-    op->requireServer(address,
-        [op, projects]() {
+    op->checkServer(address,
+        [op, projects, failText](bool reachable, int status, const QString &rawText) {
+            if (!reachable) {
+                op->endWithoutServer(status, rawText, failText);
+                return;
+            }
             std::sort(projects->begin(), projects->end(), [](const ProjectInfo &a, const ProjectInfo &b) {
                 return a.name.compare(b.name, Qt::CaseInsensitive) < 0;
             });
             op->finish(QVariant::fromValue(*projects));
         },
-        failText,
+        true,
         [projects, address](const LoreEvent &event) {
             if (event.tag == LORE_EVENT_REPOSITORY_LIST_ENTRY) {
                 ProjectInfo info;
@@ -425,35 +431,47 @@ KisVersioningJob *LoreDriver::status(const QString &localPath)
     }
     // Reading the state compares the files on disk and records what it found.
     op->setFlushBeforeEnd(true);
-    op->runStatus(true, [op](const LoreStatus &status) {
-        ProjectStatus result;
-        for (const LoreStatusFile &file : status.files) {
-            // Files only staged by a merge came from the server; the rest are this computer's.
-            const bool local = file.dirty || (file.staged && !file.merged) || file.unresolved;
-            if (!file.isFile || !local || isNeverSynced(file.path)) {
-                continue;
+    const QString failText = i18n("Could not read the state of the project.");
+    // The state also says what the server has; without an answer from it in time, the state is
+    // read from this computer alone, with nothing counted on the server's side.
+    op->checkProjectServer([op, failText](bool reachable, int checkStatus, const QString &checkText) {
+        if (!reachable) {
+            if (checkStatus != 0 && classifyLoreError(checkStatus, checkText) != LoreProblem::Offline) {
+                op->endWithoutServer(checkStatus, checkText, failText);
+                return;
             }
-            FileStatus entry;
-            entry.path = file.path;
-            entry.state = file.action == LORE_FILE_ACTION_ADD      ? FileState::Added
-                        : file.action == LORE_FILE_ACTION_DELETE ? FileState::Deleted
-                                                                  : FileState::Modified;
-            result.files.append(entry);
+            op->setWorkOffline(true);
         }
-        std::sort(result.files.begin(), result.files.end(), [](const FileStatus &a, const FileStatus &b) {
-            return a.path < b.path;
-        });
-        // Without network the library does not know the server's state: nothing is counted.
-        if (status.remoteAvailable) {
-            if (status.remoteAhead) {
-                result.incoming = int(std::max<qint64>(1, qint64(status.remoteNumber) - qint64(status.number)));
+        op->runStatus(true, [op](const LoreStatus &status) {
+            ProjectStatus result;
+            for (const LoreStatusFile &file : status.files) {
+                // Files only staged by a merge came from the server; the rest are this computer's.
+                const bool local = file.dirty || (file.staged && !file.merged) || file.unresolved;
+                if (!file.isFile || !local || isNeverSynced(file.path)) {
+                    continue;
+                }
+                FileStatus entry;
+                entry.path = file.path;
+                entry.state = file.action == LORE_FILE_ACTION_ADD      ? FileState::Added
+                            : file.action == LORE_FILE_ACTION_DELETE ? FileState::Deleted
+                                                                      : FileState::Modified;
+                result.files.append(entry);
             }
-            if (status.localAhead) {
-                result.pendingUpload = int(std::max<qint64>(1, qint64(status.localNumber) - qint64(status.remoteNumber)));
+            std::sort(result.files.begin(), result.files.end(), [](const FileStatus &a, const FileStatus &b) {
+                return a.path < b.path;
+            });
+            // Without network the library does not know the server's state: nothing is counted.
+            if (status.remoteAvailable) {
+                if (status.remoteAhead) {
+                    result.incoming = int(std::max<qint64>(1, qint64(status.remoteNumber) - qint64(status.number)));
+                }
+                if (status.localAhead) {
+                    result.pendingUpload = int(std::max<qint64>(1, qint64(status.localNumber) - qint64(status.remoteNumber)));
+                }
             }
-        }
-        op->finish(QVariant::fromValue(result));
-    }, i18n("Could not read the state of the project."));
+            op->finish(QVariant::fromValue(result));
+        }, failText);
+    });
     return job;
 }
 

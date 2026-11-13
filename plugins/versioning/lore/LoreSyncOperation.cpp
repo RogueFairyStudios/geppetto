@@ -153,7 +153,18 @@ public:
             return;
         }
         reportProgress(0, 0, i18n("Looking for changes"));
-        runStatus(true, [this](const LoreStatus &status) { onStatus(status); }, syncFailText());
+        // Without an answer from the server in time, everything runs offline: the version is
+        // created on this computer (downloaded with the local cache) and waits to be sent.
+        checkProjectServer([this](bool reachable, int checkStatus, const QString &checkText) {
+            if (!reachable) {
+                if (checkStatus != 0 && classifyLoreError(checkStatus, checkText) != LoreProblem::Offline) {
+                    endWithoutServer(checkStatus, checkText, syncFailText());
+                    return;
+                }
+                setWorkOffline(true);
+            }
+            runStatus(true, [this](const LoreStatus &status) { onStatus(status); }, syncFailText());
+        });
     }
 
 private:

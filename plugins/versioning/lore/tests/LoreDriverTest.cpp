@@ -18,6 +18,7 @@
 
 #include "LoreCall.h"
 #include "LoreDriver.h"
+#include "LoreOperation.h"
 
 using namespace KisVersioning;
 
@@ -651,6 +652,169 @@ void LoreDriverTest::testOperationsWithoutNetworkEndOffline()
     }
     // The download left nothing behind.
     QVERIFY(!QFileInfo::exists(dir.filePath("second")));
+}
+
+
+QVector<KisVersioningDriverConformance::Outcome> LoreDriverTest::runTogether(const QVector<KisVersioningJob *> &jobs,
+                                                                             int timeoutMs)
+{
+    QVector<Outcome> outcomes(jobs.size());
+    int left = jobs.size();
+    QEventLoop loop;
+    for (int i = 0; i < jobs.size(); ++i) {
+        QObject::connect(jobs[i], &KisVersioningJob::finished, &loop, [&outcomes, &left, &loop, i](KisVersioningJob *job) {
+            outcomes[i].done = true;
+            outcomes[i].error = job->error();
+            outcomes[i].errorText = job->errorText();
+            outcomes[i].result = job->result<QVariant>();
+            if (--left == 0) {
+                loop.quit();
+            }
+        });
+    }
+    QTimer::singleShot(timeoutMs, &loop, &QEventLoop::quit);
+    if (left > 0) {
+        loop.exec();
+    }
+    return outcomes;
+}
+
+void LoreDriverTest::testBackToBackOperationsShareTheServerCheck()
+{
+    REQUIRE_BACKEND();
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString first = dir.filePath("first");
+    const QString second = dir.filePath("second");
+    ProjectInfo firstProject;
+    ProjectInfo secondProject;
+    {
+        LoreDriver setUp;
+        QVERIFY(createProject(&setUp, first));
+        QVERIFY(writeFile(first, "ui/a.kra", "a"));
+        VERIFY_OK(run(setUp.synchronise(first, "ui")));
+        firstProject = m_project;
+        QVERIFY(createProject(&setUp, second));
+        QVERIFY(writeFile(second, "concepts/b.kra", "b"));
+        VERIFY_OK(run(setUp.synchronise(second, "concepts")));
+        secondProject = m_project;
+    }
+
+    // As the panel does: the folders of each project, one right after the other, on one driver.
+    {
+        LoreDriver driver;
+        const QVector<Outcome> listed = runTogether({driver.listFolders(firstProject), driver.listFolders(secondProject)});
+        VERIFY_OK(listed[0]);
+        VERIFY_OK(listed[1]);
+        QCOMPARE(listed[0].result.toStringList(), QStringList({"ui"}));
+        QCOMPARE(listed[1].result.toStringList(), QStringList({"concepts"}));
+    }
+    // An editing notice withdrawn while the question who is editing is still under way.
+    {
+        LoreDriver driver;
+        driver.setIdentityForTesting(QStringLiteral("A"));
+        const QVector<Outcome> presence =
+            runTogether({driver.whoIsEditing(first, {"ui/a.kra"}), driver.announceEditing(first, "ui/a.kra", false)});
+        VERIFY_OK(presence[0]);
+        VERIFY_OK(presence[1]);
+    }
+    // Without network, both end Offline.
+    {
+        LoreDriver driver;
+        driver.setOfflineForTesting(true);
+        const QVector<Outcome> listed = runTogether({driver.listFolders(firstProject), driver.listFolders(secondProject)});
+        QCOMPARE(listed[0].error, KisVersioningJob::Offline);
+        QCOMPARE(listed[1].error, KisVersioningJob::Offline);
+        const QVector<Outcome> presence =
+            runTogether({driver.whoIsEditing(first, {"ui/a.kra"}), driver.announceEditing(first, "ui/a.kra", false)});
+        QCOMPARE(presence[0].error, KisVersioningJob::Offline);
+        QCOMPARE(presence[1].error, KisVersioningJob::Offline);
+    }
+}
+
+void LoreDriverTest::testLateAnswerDoesNotOverwriteNewerState()
+{
+    using Decision = LoreReachability::Decision;
+    LoreReachability reachability;
+    const QString key = QStringLiteral("lore://server");
+    QVERIFY(reachability.decide(key) == Decision::Ask);
+
+    // A check passes its limit: the server counts as not answering, and its call lingers.
+    const quint64 first = reachability.begin(key);
+    QVERIFY(reachability.decide(key) == Decision::Wait);
+    reachability.settle(key, first, false, true);
+    QVERIFY(reachability.decide(key) == Decision::Unreachable);
+    QCOMPARE(reachability.lingering(key), 1);
+
+    // A newer check is under way when the old call ends: the newer one is still waited for.
+    const quint64 second = reachability.begin(key);
+    reachability.lateEnd(key, first, false);
+    QVERIFY(reachability.decide(key) == Decision::Wait);
+    QCOMPARE(reachability.lingering(key), 0);
+    reachability.settle(key, second, true, false);
+    QVERIFY(reachability.decide(key) == Decision::Ask);
+
+    // A late "no" from a timed-out check after a newer "yes" changes nothing.
+    const quint64 third = reachability.begin(key);
+    reachability.settle(key, third, false, true);
+    const quint64 fourth = reachability.begin(key);
+    reachability.settle(key, fourth, true, false);
+    reachability.lateEnd(key, third, false);
+    QVERIFY(reachability.decide(key) == Decision::Ask);
+
+    // An older check that answers after a newer one changes nothing either.
+    const quint64 fifth = reachability.begin(key);
+    const quint64 sixth = reachability.begin(key);
+    reachability.settle(key, sixth, true, false);
+    reachability.settle(key, fifth, false, false);
+    QVERIFY(reachability.decide(key) == Decision::Ask);
+
+    // The answer of the newest check counts, and "no" is reused for a while.
+    const quint64 seventh = reachability.begin(key);
+    reachability.settle(key, seventh, false, false);
+    QVERIFY(reachability.decide(key) == Decision::Unreachable);
+
+    // Other servers are not affected.
+    QVERIFY(reachability.decide(QStringLiteral("lore://other")) == Decision::Ask);
+}
+
+void LoreDriverTest::testSynchroniseAndStatusWithoutNetwork()
+{
+    REQUIRE_BACKEND();
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    LoreDriver driver;
+    const QString project = dir.filePath("project");
+    QVERIFY(createProject(&driver, project));
+    QVERIFY(writeFile(project, "a.kra", "base"));
+    VERIFY_OK(run(driver.synchronise(project, "base")));
+
+    // No network: the version is created on this computer and waits.
+    driver.setOfflineForTesting(true);
+    QVERIFY(writeFile(project, "a.kra", "changed with no network"));
+    const Outcome offline = run(driver.synchronise(project, "no network"));
+    VERIFY_OK(offline);
+    QVERIFY(offline.result.value<SyncResult>().pendingUpload);
+    QVERIFY(offline.result.value<SyncResult>().divergences.isEmpty());
+
+    // The state is read from this computer: nothing changed on disk, nothing counted on the server.
+    const Outcome state = run(driver.status(project));
+    VERIFY_OK(state);
+    QVERIFY(state.result.value<ProjectStatus>().files.isEmpty());
+    QCOMPARE(state.result.value<ProjectStatus>().incoming, 0);
+
+    // With the network back, the server does not have it yet; one synchronisation sends it.
+    driver.setOfflineForTesting(false);
+    const Outcome online = run(driver.status(project));
+    VERIFY_OK(online);
+    QVERIFY(online.result.value<ProjectStatus>().pendingUpload >= 1);
+    const Outcome sent = run(driver.synchronise(project, QString()));
+    VERIFY_OK(sent);
+    QVERIFY(!sent.result.value<SyncResult>().pendingUpload);
+    QCOMPARE(historyOf(&driver, project, "a.kra").size(), 2);
+    const Outcome after = run(driver.status(project));
+    VERIFY_OK(after);
+    QCOMPARE(after.result.value<ProjectStatus>().pendingUpload, 0);
 }
 
 SIMPLE_TEST_MAIN(LoreDriverTest)
