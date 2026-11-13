@@ -82,7 +82,7 @@ private:
     void endWithError(KisVersioningJob::Error error, const QString &text);
     void conclude();
     void watch(KisVersioningJob *job);
-    bool wasSavedHere(const QString &absolutePath) const;
+    void reloadIfClean(const QString &path);
 
     KisVersioningDriver *m_driver;
     KisVersioningDocumentHost *m_host;
@@ -94,7 +94,9 @@ private:
     bool m_hadDivergence {false};
     QVector<KisVersioning::Divergence> m_divergences;
     int m_nextDivergence {0};
-    QStringList m_savedDocuments;
+    QString m_resolvingPath;
+    bool m_resolvingTheirs {false};
+    QStringList m_reloaded;
     Report m_report;
 };
 

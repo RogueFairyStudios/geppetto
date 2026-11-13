@@ -16,6 +16,8 @@ private Q_SLOTS:
     void testOnlyMineIsSent();
     void testOnlyTheirsReloadsCleanDoc();
     void testModifiedOpenDocIsSavedFirst();
+    void testKeepBothReloadsCleanOpenDocument();
+    void testKeepBothDoesNotReloadModifiedDocument();
     void testBothModifiedKeepsBoth();
     void testConflictCopyNameAlreadyTaken();
     void testConflictCopyNeverOverwritesOtherCase();

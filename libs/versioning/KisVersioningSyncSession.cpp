@@ -29,16 +29,6 @@ void appendUnique(QStringList &list, const QStringList &items)
     }
 }
 
-bool samePath(const QString &a, const QString &b)
-{
-#ifdef Q_OS_LINUX
-    const Qt::CaseSensitivity sensitivity = Qt::CaseSensitive;
-#else
-    const Qt::CaseSensitivity sensitivity = Qt::CaseInsensitive;
-#endif
-    return QDir::cleanPath(a).compare(QDir::cleanPath(b), sensitivity) == 0;
-}
-
 } // namespace
 
 KisVersioningDocumentHost::~KisVersioningDocumentHost() = default;
@@ -64,7 +54,7 @@ void KisVersioningSyncSession::start(const QString &projectPath, const QString &
     m_notes = notes;
     m_attempts = 0;
     m_report = Report();
-    m_savedDocuments.clear();
+    m_reloaded.clear();
 
     // What the artist is editing goes to disk first: the driver only sees files.
     const QStringList modified = m_host->modifiedOpenDocuments(projectPath);
@@ -74,7 +64,6 @@ void KisVersioningSyncSession::start(const QString &projectPath, const QString &
                          i18n("Could not save %1 before synchronising.", QDir::toNativeSeparators(document)));
             return;
         }
-        m_savedDocuments << document;
     }
 
     synchroniseOnce();
@@ -146,6 +135,8 @@ void KisVersioningSyncSession::resolveNext()
 
 void KisVersioningSyncSession::runResolve(const QString &path, Resolution resolution)
 {
+    m_resolvingPath = path;
+    m_resolvingTheirs = (resolution == Resolution::Theirs);
     KisVersioningJob *job = m_driver->resolve(m_projectPath, path, resolution, QString());
     watch(job);
     connect(job, &KisVersioningJob::finished, this, &KisVersioningSyncSession::onResolved);
@@ -156,6 +147,11 @@ void KisVersioningSyncSession::onResolved(KisVersioningJob *job)
     if (job->error() != KisVersioningJob::NoError) {
         endWithDriverError(job);
         return;
+    }
+    if (m_resolvingTheirs) {
+        // The file now holds the other version: an open, unchanged document must show it,
+        // or the next save would put mine back over it. Mine is safe in the conflict copy.
+        reloadIfClean(m_resolvingPath);
     }
     resolveNext();
 }
@@ -222,14 +218,14 @@ bool KisVersioningSyncSession::keepBoth(const QString &path, QString *copyPath, 
     return false;
 }
 
-bool KisVersioningSyncSession::wasSavedHere(const QString &absolutePath) const
+void KisVersioningSyncSession::reloadIfClean(const QString &path)
 {
-    for (const QString &saved : m_savedDocuments) {
-        if (samePath(saved, absolutePath)) {
-            return true;
-        }
+    // Asked now, not remembered from the start: the artist may have kept working meanwhile.
+    const QString absolute = QDir(m_projectPath).filePath(path);
+    if (!m_reloaded.contains(path) && m_host->isOpenAndUnmodified(absolute)) {
+        m_reloaded << path;
+        m_host->reloadDocument(absolute);
     }
-    return false;
 }
 
 void KisVersioningSyncSession::endWithDriverError(KisVersioningJob *job)
@@ -252,13 +248,8 @@ void KisVersioningSyncSession::endWithError(KisVersioningJob::Error error, const
 void KisVersioningSyncSession::conclude()
 {
     // Files that arrived from the server and are open without changes are shown again.
-    // What the session saved itself is left alone: its content was just sent or kept.
-    const QDir root(m_projectPath);
     for (const QString &path : std::as_const(m_report.received)) {
-        const QString absolute = root.filePath(path);
-        if (!wasSavedHere(absolute) && m_host->isOpenAndUnmodified(absolute)) {
-            m_host->reloadDocument(absolute);
-        }
+        reloadIfClean(path);
     }
 
     // Never from inside start(): the caller connects after calling it, or before, and both work.

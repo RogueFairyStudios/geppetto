@@ -23,7 +23,8 @@ class FakeHost : public KisVersioningDocumentHost
 {
 public:
     QStringList modified;
-    QStringList openAndUnmodified;
+    QStringList openAndUnmodified;  ///< open documents without changes; a saved document joins them
+    QStringList modifiedAgain;      ///< open documents the artist changed again after the save
     bool saveSucceeds = true;
     QStringList reloaded;
     QStringList *sharedLog = nullptr;
@@ -34,13 +35,22 @@ public:
         if (sharedLog) {
             sharedLog->append(QStringLiteral("host:saveDocument ") + absolutePath);
         }
+        if (saveSucceeds && !openAndUnmodified.contains(absolutePath)) {
+            openAndUnmodified << absolutePath;
+        }
         return saveSucceeds;
     }
     bool isOpenAndUnmodified(const QString &absolutePath) const override
     {
-        return openAndUnmodified.contains(absolutePath);
+        return openAndUnmodified.contains(absolutePath) && !modifiedAgain.contains(absolutePath);
     }
-    void reloadDocument(const QString &absolutePath) override { reloaded << absolutePath; }
+    void reloadDocument(const QString &absolutePath) override
+    {
+        reloaded << absolutePath;
+        if (sharedLog) {
+            sharedLog->append(QStringLiteral("host:reloadDocument ") + absolutePath);
+        }
+    }
 };
 
 struct Fixture {
@@ -153,8 +163,8 @@ void KisVersioningSyncSessionTest::testModifiedOpenDocIsSavedFirst()
 {
     Fixture f;
     f.host.modified = QStringList{f.path("ui/botao.kra")};
-    // It is clean after the save, but the session must not reload what it just saved.
-    f.host.openAndUnmodified = QStringList{f.path("ui/botao.kra")};
+    // The artist keeps working while the synchronisation runs: unsaved changes are never reloaded over.
+    f.host.modifiedAgain = QStringList{f.path("ui/botao.kra")};
     SyncResult result;
     result.sent = QStringList{"ui/botao.kra"};
     result.received = QStringList{"ui/botao.kra"};
@@ -167,6 +177,45 @@ void KisVersioningSyncSessionTest::testModifiedOpenDocIsSavedFirst()
     QVERIFY(f.log.at(0).startsWith("host:saveDocument "));
     QVERIFY(f.log.at(1).startsWith("driver:synchronise "));
     QVERIFY(f.host.reloaded.isEmpty());
+}
+
+void KisVersioningSyncSessionTest::testKeepBothReloadsCleanOpenDocument()
+{
+    Fixture f;
+    f.driver.setCurrentUser("Bruno");
+    f.write("ui/botao.kra", "mine");
+    f.driver.setTheirContent("ui/botao.kra", "theirs");
+    f.host.modified = QStringList{f.path("ui/botao.kra")};  // saved first, so unmodified afterwards
+    f.driver.queueSyncResult(resultWithDivergence("ui/botao.kra", DivergenceKind::BothModified));
+
+    const auto report = f.run();
+
+    QCOMPARE(report.error, KisVersioningJob::NoError);
+    QCOMPARE(f.host.reloaded, QStringList({f.path("ui/botao.kra")}));
+    QCOMPARE(f.read("ui/botao (Bruno).kra"), QByteArray("mine"));
+    int resolveAt = -1, reloadAt = -1;
+    for (int i = 0; i < f.log.size(); ++i) {
+        if (f.log.at(i).startsWith("driver:resolve ")) resolveAt = i;
+        if (f.log.at(i).startsWith("host:reloadDocument ")) reloadAt = i;
+    }
+    QVERIFY(resolveAt >= 0);
+    QVERIFY(reloadAt > resolveAt);
+}
+
+void KisVersioningSyncSessionTest::testKeepBothDoesNotReloadModifiedDocument()
+{
+    Fixture f;
+    f.driver.setCurrentUser("Bruno");
+    f.write("ui/botao.kra", "mine");
+    f.host.openAndUnmodified = QStringList{f.path("ui/botao.kra")};
+    f.host.modifiedAgain = QStringList{f.path("ui/botao.kra")};
+    f.driver.queueSyncResult(resultWithDivergence("ui/botao.kra", DivergenceKind::BothModified));
+
+    const auto report = f.run();
+
+    QCOMPARE(report.error, KisVersioningJob::NoError);
+    QVERIFY(f.host.reloaded.isEmpty());
+    QCOMPARE(f.read("ui/botao (Bruno).kra"), QByteArray("mine"));
 }
 
 void KisVersioningSyncSessionTest::testBothModifiedKeepsBoth()
@@ -258,9 +307,11 @@ void KisVersioningSyncSessionTest::testDeleteVersusModifyKeepsTheChange()
         // I deleted it, the other person changed it: take theirs.
         Fixture f;
         f.driver.setCurrentUser("Bruno");
+        f.host.openAndUnmodified = QStringList{f.path("ui/botao.kra")};
         f.driver.queueSyncResult(resultWithDivergence("ui/botao.kra", DivergenceKind::DeletedHereModifiedThere));
 
         const auto report = f.run();
+        QCOMPARE(f.host.reloaded, QStringList({f.path("ui/botao.kra")}));
 
         QCOMPARE(report.error, KisVersioningJob::NoError);
         const auto resolves = f.driver.callsNamed("resolve");
@@ -274,9 +325,11 @@ void KisVersioningSyncSessionTest::testDeleteVersusModifyKeepsTheChange()
         Fixture f;
         f.driver.setCurrentUser("Bruno");
         f.write("ui/botao.kra", "mine");
+        f.host.openAndUnmodified = QStringList{f.path("ui/botao.kra")};
         f.driver.queueSyncResult(resultWithDivergence("ui/botao.kra", DivergenceKind::ModifiedHereDeletedThere));
 
         const auto report = f.run();
+        QVERIFY(f.host.reloaded.isEmpty());  // my file stays: nothing to show again
 
         QCOMPARE(report.error, KisVersioningJob::NoError);
         const auto resolves = f.driver.callsNamed("resolve");
