@@ -13,6 +13,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLockFile>
 #include <QMap>
 #include <QMutex>
 #include <QMutexLocker>
@@ -21,6 +22,7 @@
 #include <QtConcurrent>
 
 #include <algorithm>
+#include <atomic>
 #include <functional>
 #include <map>
 
@@ -51,6 +53,7 @@ enum class Problem {
     CannotWrite,
     NoSuchVersion,
     NotInVersion,
+    Locked,
 };
 
 /// What a worker hands back to the interface thread.
@@ -58,7 +61,6 @@ struct Outcome {
     Problem problem = Problem::None;
     QString subject;                 ///< the file, folder or version the problem is about
     QVariant result;
-    QVector<int> changedFiles;       ///< fileHistory only: how many files each returned version changed
 };
 
 Outcome problem(Problem kind, const QString &subject = QString())
@@ -84,6 +86,11 @@ struct Version {
 };
 
 using Cancelled = std::function<bool()>;
+/// Makes the default summary of a version; it runs on the job's thread, where translating is done.
+using Summary = std::function<QString(int)>;
+
+const char lockFileName[] = "lock";
+std::atomic<int> lockTimeoutMs {10000};
 
 /// One operation at a time touches the index, whatever driver asked for it.
 Q_GLOBAL_STATIC(QMutex, storeMutex)
@@ -384,11 +391,22 @@ Outcome doStatus(const QString &root)
     return outcome;
 }
 
-Outcome doSynchronise(const QString &root, const QString &author, const QString &notes, const Cancelled &cancelled)
+Outcome doSynchronise(const QString &root, const QString &author, const QString &notes, const Cancelled &cancelled,
+                      const Summary &summary)
 {
     QMutexLocker locker(storeMutex());
     if (!isProjectFolder(root)) {
         return problem(Problem::FolderMissing, root);
+    }
+    // Other processes (a second instance, or another computer on a shared or synced folder) may
+    // synchronise the same project: the lock is held from reading the index to saving it, so the
+    // number chosen below is never taken by anyone else.
+    if (!QDir().mkpath(storePath(root))) {
+        return problem(Problem::IndexUnwritable, root);
+    }
+    QLockFile storeLock(QDir(storePath(root)).filePath(QString::fromLatin1(lockFileName)));
+    if (!storeLock.tryLock(lockTimeoutMs.load())) {
+        return problem(Problem::Locked, root);
     }
     QVector<Version> versions;
     if (!loadIndex(root, &versions)) {
@@ -429,10 +447,11 @@ Outcome doSynchronise(const QString &root, const QString &author, const QString 
     version.number = versions.isEmpty() ? 1 : versions.last().number + 1;
     version.author = author;
     version.date = QDateTime::currentDateTimeUtc();
-    version.notes = notes.trimmed().isEmpty() ? QString() : notes;
+    version.notes = notes.trimmed().isEmpty() ? summary(changedPaths.size() + deletedPaths.size()) : notes;
 
-    // Copies first and index last: the index is what makes the version exist, so a failure before
-    // it leaves nothing behind but a folder that is removed here and, after a crash, by the next try.
+    // Copies first and index last: the index is what makes the version exist. The index was read
+    // under the lock and has no entry for this number, so a folder already named like it holds
+    // leftovers of an interrupted run that nothing references; no committed copy is ever removed.
     const QString folder = versionFolder(root, version.number);
     QDir(folder).removeRecursively();
     auto discard = [&folder]() { QDir(folder).removeRecursively(); };
@@ -485,7 +504,6 @@ Outcome doFileHistory(const QString &root, const QString &path, int offset, int 
     }
 
     QVector<VersionInfo> history;
-    QVector<int> changed;
     int skipped = 0;
     for (const Version &version : versions) {   // oldest first
         bool touchesFile = false;
@@ -512,11 +530,9 @@ Outcome doFileHistory(const QString &root, const QString &path, int offset, int 
         info.date = version.date;
         info.notes = version.notes;
         history.append(info);
-        changed.append(version.files.size());
     }
     Outcome outcome;
     outcome.result = QVariant::fromValue(history);
-    outcome.changedFiles = changed;
     return outcome;
 }
 
@@ -582,6 +598,9 @@ QString textFor(const Outcome &outcome)
         return i18n("There is no version %1.", outcome.subject);
     case Problem::NotInVersion:
         return i18n("%1 does not exist in that version.", outcome.subject);
+    case Problem::Locked:
+        return i18n("The versions kept in %1 are being used by another program. Try again in a moment.",
+                    QDir::toNativeSeparators(outcome.subject));
     case Problem::None:
         break;
     }
@@ -591,19 +610,15 @@ QString textFor(const Outcome &outcome)
 /**
  * Runs @p work on a worker thread and ends the job on the job's thread. The job has no parent and
  * the worker only holds copies of its arguments, so both are safe when the driver is destroyed
- * first. The job deletes itself once it has ended.
- * @p finishOnJobThread may adjust the outcome there (it is where translating is done).
+ * first. The job deletes itself once it has ended. The worker may ask the job's thread for the
+ * default summary of a version (the job's thread runs its event loop, as jobs require).
  */
-KisVersioningJob *startJob(const std::function<Outcome(const Cancelled &)> &work,
-                           const std::function<void(Outcome &)> &finishOnJobThread = nullptr)
+KisVersioningJob *startJob(const std::function<Outcome(const Cancelled &, const Summary &)> &work)
 {
     auto *job = new KisVersioningJob();
     auto *watcher = new QFutureWatcher<Outcome>(job);
-    QObject::connect(watcher, &QFutureWatcher<Outcome>::finished, job, [job, watcher, finishOnJobThread]() {
-        Outcome outcome = watcher->result();
-        if (finishOnJobThread && outcome.problem == Problem::None) {
-            finishOnJobThread(outcome);
-        }
+    QObject::connect(watcher, &QFutureWatcher<Outcome>::finished, job, [job, watcher]() {
+        const Outcome outcome = watcher->result();
         if (outcome.problem == Problem::None) {
             job->finish(outcome.result);
         } else {
@@ -613,7 +628,13 @@ KisVersioningJob *startJob(const std::function<Outcome(const Cancelled &)> &work
     });
     // The job ends only through the watcher, so the pointer stays valid for as long as the worker runs.
     watcher->setFuture(QtConcurrent::run([work, job]() {
-        return work([job]() { return job->cancelRequested(); });
+        return work([job]() { return job->cancelRequested(); },
+                    [job](int changedFiles) {
+                        QString text;
+                        QMetaObject::invokeMethod(job, [&text, changedFiles]() { text = defaultNotes(changedFiles); },
+                                                  Qt::BlockingQueuedConnection);
+                        return text;
+                    });
     }));
     return job;
 }
@@ -626,6 +647,11 @@ KisVersioningJob *unsupported()
 }
 
 } // namespace
+
+void LocalFolderDriver::setLockTimeout(int milliseconds)
+{
+    lockTimeoutMs = milliseconds;
+}
 
 LocalFolderDriver::LocalFolderDriver(QObject *parent)
     : KisVersioningDriver(parent)
@@ -673,7 +699,7 @@ KisVersioningJob *LocalFolderDriver::listFolders(const ProjectInfo &)
 
 KisVersioningJob *LocalFolderDriver::downloadProject(const ProjectInfo &, const QString &localPath, const QStringList &)
 {
-    return startJob([localPath](const Cancelled &) { return doDownload(localPath); });
+    return startJob([localPath](const Cancelled &, const Summary &) { return doDownload(localPath); });
 }
 
 KisVersioningJob *LocalFolderDriver::setFolders(const QString &, const QStringList &)
@@ -683,14 +709,14 @@ KisVersioningJob *LocalFolderDriver::setFolders(const QString &, const QStringLi
 
 KisVersioningJob *LocalFolderDriver::status(const QString &localPath)
 {
-    return startJob([localPath](const Cancelled &) { return doStatus(localPath); });
+    return startJob([localPath](const Cancelled &, const Summary &) { return doStatus(localPath); });
 }
 
 KisVersioningJob *LocalFolderDriver::synchronise(const QString &localPath, const QString &notes)
 {
     const QString author = currentUser();
-    return startJob([localPath, author, notes](const Cancelled &cancelled) {
-        return doSynchronise(localPath, author, notes, cancelled);
+    return startJob([localPath, author, notes](const Cancelled &cancelled, const Summary &summary) {
+        return doSynchronise(localPath, author, notes, cancelled, summary);
     });
 }
 
@@ -701,24 +727,15 @@ KisVersioningJob *LocalFolderDriver::resolve(const QString &, const QString &, R
 
 KisVersioningJob *LocalFolderDriver::fileHistory(const QString &localPath, const QString &path, int offset, int limit)
 {
-    return startJob([localPath, path, offset, limit](const Cancelled &) {
+    return startJob([localPath, path, offset, limit](const Cancelled &, const Summary &) {
         return doFileHistory(localPath, path, offset, limit);
-    }, [](Outcome &outcome) {
-        // Versions saved without notes get the summary now, in the language of the moment.
-        QVector<VersionInfo> history = outcome.result.value<QVector<VersionInfo>>();
-        for (int i = 0; i < history.size(); ++i) {
-            if (history[i].notes.isEmpty()) {
-                history[i].notes = defaultNotes(outcome.changedFiles.value(i));
-            }
-        }
-        outcome.result = QVariant::fromValue(history);
     });
 }
 
 KisVersioningJob *LocalFolderDriver::fetchFileAtVersion(const QString &localPath, const QString &path,
                                                         const QString &versionId, const QString &outputPath)
 {
-    return startJob([localPath, path, versionId, outputPath](const Cancelled &cancelled) {
+    return startJob([localPath, path, versionId, outputPath](const Cancelled &cancelled, const Summary &) {
         return doFetch(localPath, path, versionId, outputPath, cancelled);
     });
 }

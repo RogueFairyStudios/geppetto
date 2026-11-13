@@ -27,6 +27,9 @@ private Q_SLOTS:
     void testUnsupportedOperationsFail();
     void testListProjectsIsEmpty();
     void testDriverMayBeDestroyedWhileWorking();
+    void testTwoDriversOnOneFolderKeepEveryVersion();
+    void testLockedStoreFailsWithoutWriting();
+    void testDefaultNotesAreStoredNotTranslatedOnRead();
 };
 
 #endif // LOCALFOLDERDRIVERTEST_H

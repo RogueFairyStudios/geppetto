@@ -90,3 +90,8 @@ msgstr "%1 não existe nessa versão."
 #: plugins/versioning/localfolder/LocalFolderDriver.cpp
 msgid "Versions kept in a folder do not support this operation."
 msgstr "Versões guardadas em uma pasta não oferecem suporte a esta operação."
+
+#: plugins/versioning/localfolder/LocalFolderDriver.cpp
+#, kde-format
+msgid "The versions kept in %1 are being used by another program. Try again in a moment."
+msgstr "As versões guardadas em %1 estão sendo usadas por outro programa. Tente de novo em instantes."

@@ -6,6 +6,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QLockFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 
@@ -218,6 +219,97 @@ void LocalFolderDriverTest::testDriverMayBeDestroyedWhileWorking()
 
     LocalFolderDriver another;
     QCOMPARE(historyOf(&another, project, "file 0.kra").size(), 1);
+}
+
+void LocalFolderDriverTest::testTwoDriversOnOneFolderKeepEveryVersion()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    LocalFolderDriver first;
+    LocalFolderDriver second;
+    const QString project = dir.filePath("project");
+    QVERIFY(createProject(&first, project));
+
+    QVERIFY(writeFile(project, "a.kra", "from the first"));
+    VERIFY_OK(run(first.synchronise(project, "one")));
+
+    // A folder left for the next number by an interrupted run, which the index does not mention.
+    QVERIFY(writeFile(project, ".geppetto/versions/3/leftover.kra", "nothing references this"));
+
+    // The second driver never saw the first one's work; it must still take the next number.
+    QVERIFY(writeFile(project, "b.kra", "from the second"));
+    VERIFY_OK(run(second.synchronise(project, "two")));
+    QVERIFY(writeFile(project, "c.kra", "from the first again"));
+    VERIFY_OK(run(first.synchronise(project, "three")));
+
+    QCOMPARE(historyOf(&first, project, "a.kra").value(0).number, 1);
+    QCOMPARE(historyOf(&second, project, "b.kra").value(0).number, 2);
+    QCOMPARE(historyOf(&second, project, "c.kra").value(0).number, 3);
+
+    const QStringList expected = {"a.kra", "b.kra", "c.kra"};
+    const QByteArrayList bytes = {"from the first", "from the second", "from the first again"};
+    for (int i = 0; i < expected.size(); ++i) {
+        const QString output = dir.filePath(QString("restored/%1").arg(expected[i]));
+        VERIFY_OK(run(second.fetchFileAtVersion(project, expected[i], QString::number(i + 1), output)));
+        QCOMPARE(readFile(output), bytes[i]);
+    }
+}
+
+void LocalFolderDriverTest::testLockedStoreFailsWithoutWriting()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    LocalFolderDriver driver;
+    const QString project = dir.filePath("project");
+    QVERIFY(createProject(&driver, project));
+    QVERIFY(writeFile(project, "a.kra", "a"));
+    VERIFY_OK(run(driver.synchronise(project, "one")));
+
+    const QString indexPath = QDir(project).filePath(".geppetto/versions/index.json");
+    const QByteArray indexBefore = readFile(indexPath);
+    QVERIFY(!indexBefore.isEmpty());
+
+    // Another holder has the lock file.
+    LocalFolderDriver::setLockTimeout(300);
+    {
+        QLockFile other(QDir(project).filePath(".geppetto/versions/lock"));
+        QVERIFY(other.tryLock(1000));
+        QVERIFY(writeFile(project, "b.kra", "b"));
+        const Outcome blocked = run(driver.synchronise(project, "two"));
+        QVERIFY(blocked.done);
+        QCOMPARE(blocked.error, KisVersioningJob::Failed);
+        QVERIFY(!blocked.errorText.isEmpty());
+        QVERIFY(!QFileInfo::exists(QDir(project).filePath(".geppetto/versions/2")));
+        QCOMPARE(readFile(indexPath), indexBefore);
+    }
+    LocalFolderDriver::setLockTimeout(10000);
+
+    // Once the other holder lets go, the same call works.
+    VERIFY_OK(run(driver.synchronise(project, "two")));
+    QCOMPARE(historyOf(&driver, project, "b.kra").size(), 1);
+}
+
+void LocalFolderDriverTest::testDefaultNotesAreStoredNotTranslatedOnRead()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    LocalFolderDriver driver;
+    const QString project = dir.filePath("project");
+    QVERIFY(createProject(&driver, project));
+
+    KLocalizedString::setLanguages({QStringLiteral("en_US")});
+    QVERIFY(writeFile(project, "a.kra", "a"));
+    QVERIFY(writeFile(project, "b.kra", "b"));
+    QVERIFY(writeFile(project, "c.kra", "c"));
+    VERIFY_OK(run(driver.synchronise(project, QString())));
+
+    KLocalizedString::setLanguages({QStringLiteral("pt_BR")});
+    const QVector<VersionInfo> history = historyOf(&driver, project, "a.kra");
+    KLocalizedString::setLanguages({QStringLiteral("en_US")});
+
+    QCOMPARE(history.size(), 1);
+    QCOMPARE(history[0].notes, QString("3 files changed"));
+    QVERIFY(readFile(QDir(project).filePath(".geppetto/versions/index.json")).contains("3 files changed"));
 }
 
 SIMPLE_TEST_MAIN(LocalFolderDriverTest)

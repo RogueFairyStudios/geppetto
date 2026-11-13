@@ -23,6 +23,9 @@ public:
     explicit LocalFolderDriver(QObject *parent = nullptr);
     ~LocalFolderDriver() override;
 
+    /// How long synchronise() waits for another process writing the same store before it fails.
+    static void setLockTimeout(int milliseconds);
+
     QString id() const override;
     KisVersioning::Capabilities capabilities() const override;
     QString currentUser() const override;
