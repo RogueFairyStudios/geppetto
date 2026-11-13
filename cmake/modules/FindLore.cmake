@@ -31,6 +31,14 @@ Result Variables
 ``Lore_RUNTIME_LIBRARY``
   on Windows, the path of ``lore.dll``.
 
+Cache Variables
+^^^^^^^^^^^^^^^
+
+``Lore_LICENSE_FILE``
+  the licence file to install with the library. Defaults to the ``LICENSE``
+  file at the root of ``Lore_ROOT``, when there is one; otherwise the builder
+  may set it.
+
 #]=======================================================================]
 
 set(_lore_hints ${Lore_ROOT} $ENV{Lore_ROOT})
@@ -98,7 +106,14 @@ if (Lore_FOUND)
     endif()
 endif()
 
-mark_as_advanced(Lore_INCLUDE_DIR Lore_LIBRARY Lore_RUNTIME_LIBRARY)
+find_file(Lore_LICENSE_FILE
+    NAMES LICENSE
+    HINTS ${_lore_hints}
+    NO_DEFAULT_PATH
+    DOC "The licence file of the Lore library, installed with it"
+)
+
+mark_as_advanced(Lore_LICENSE_FILE Lore_INCLUDE_DIR Lore_LIBRARY Lore_RUNTIME_LIBRARY)
 unset(_lore_hints)
 unset(_lore_required)
 unset(_lore_version_line)

@@ -40,3 +40,16 @@ target_link_libraries(kritaversioninglore
 )
 copy_lore_runtime(kritaversioninglore)
 install(TARGETS kritaversioninglore DESTINATION ${KRITA_PLUGIN_INSTALL_DIR})
+
+# The Windows build ships the library next to the executables. The licence (MIT) asks for its
+# notice to travel with the binaries, so it is installed on every platform.
+if(WIN32 AND Lore_RUNTIME_LIBRARY)
+    install(FILES ${Lore_RUNTIME_LIBRARY} DESTINATION ${KDE_INSTALL_BINDIR})
+endif()
+
+if(Lore_LICENSE_FILE AND EXISTS "${Lore_LICENSE_FILE}")
+    install(FILES "${Lore_LICENSE_FILE}" DESTINATION ${KDE_INSTALL_DATADIR}/krita RENAME lore-LICENSE.txt)
+else()
+    message(STATUS "Lore_LICENSE_FILE is not set or does not exist: the Lore licence will not be installed. "
+                   "Set it to the LICENSE file of the Lore sources.")
+endif()
