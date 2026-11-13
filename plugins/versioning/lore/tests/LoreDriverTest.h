@@ -42,6 +42,12 @@ private Q_SLOTS:
     void testResolveMineKeepsMyBytes();
     void testUnsettledDivergenceIsReportedAgain_data();
     void testUnsettledDivergenceIsReportedAgain();
+    void testPreparedButNotCreatedVersionIsSentNext_data();
+    void testPreparedButNotCreatedVersionIsSentNext();
+    void testSetFoldersRefusesLocalChanges();
+    void testSetFoldersRefusesUnsentVersion_data();
+    void testSetFoldersRefusesUnsentVersion();
+    void testOperationsWithoutNetworkEndOffline();
 
 private:
     QString server() const;

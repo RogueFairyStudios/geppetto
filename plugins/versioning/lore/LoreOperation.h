@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 
+#include <QElapsedTimer>
 #include <QHash>
 #include <QObject>
 #include <QPointer>
@@ -29,7 +30,29 @@ struct LoreMemory {
     QHash<QString, QStringList> unsent;
     /// Paths that Lore merged by itself and the artist chose to keep as they are on disk.
     QHash<QString, QSet<QString>> keptAfterMerge;
+
+    /// Whether the server answered, per project folder or server address, and when it was asked.
+    struct Reachability {
+        bool reachable {false};
+        QElapsedTimer age;
+        bool asking {false};   ///< a question to the server has not ended yet
+        QElapsedTimer askingSince;
+    };
+    QHash<QString, Reachability> reachability;
 };
+
+/// How long the answer that the server did not answer is reused before it is asked again. That
+/// it answered is never reused: the network can go away in between, and the next call would wait.
+constexpr qint64 loreReachabilityReuseMs = 10000;
+
+/// How long the driver waits for the server to answer the question whether it answers. Without
+/// network that question normally ends in about 2 s; right after the server went away it can wait
+/// for minutes, like any call.
+constexpr int loreReachabilityWaitMs = 10000;
+
+/// While a question gets no answer, nothing else asks for this long; then one more question may
+/// start, so that the end of an outage is noticed without waiting for the first question to end.
+constexpr qint64 loreQuestionRetryMs = 60000;
 
 /// What an operation takes from the driver when it starts, so that it does not need the driver
 /// to live on.
@@ -97,6 +120,9 @@ QByteArray lorePath(const QString &path);
 /// A path inside a project as the library names it: '/' separators, no leading "./" or '/'.
 QString loreRelativePath(const QString &path);
 
+/// A server address without trailing '/', as the library takes it.
+QString loreServerKey(const QString &serverAddress);
+
 /// The address of a project on its server, as the library takes it.
 QString loreRepositoryUrl(const KisVersioning::ProjectInfo &project);
 
@@ -136,6 +162,24 @@ public:
     /// Ends the job and returns false when the project folder is missing or holds no project.
     bool requireProject();
 
+    /**
+     * A call with no network can wait for minutes and cannot be cancelled, so a call that needs
+     * the server first establishes that it answers. These run @p then when the server answers now,
+     * and otherwise end the job with Offline:
+     * - at once, when it did not answer less than loreReachabilityReuseMs ago, or when an earlier
+     *   question is still waiting;
+     * - after loreReachabilityWaitMs, when this question gets no answer. The question then goes on
+     *   in the library, which cannot stop it; no other question is asked until it ends or
+     *   loreQuestionRetryMs has passed.
+     *
+     * For the project's server: a status call on the project.
+     */
+    void requireProjectServer(const std::function<void()> &then, const QString &failText);
+    /// For a server named by address, for calls made outside a project: a listing of its
+    /// projects, whose events go to @p onEvent when given.
+    void requireServer(const QString &serverAddress, const std::function<void()> &then, const QString &failText,
+                       const EventHandler &onEvent = EventHandler());
+
     /// True, after ending the job with Cancelled, when the artist asked to stop. Checked between
     /// one call and the next: a call in flight always runs to its end.
     bool stopIfCancelled();
@@ -155,6 +199,18 @@ public:
 
 private:
     void endAfterFlush(const std::function<void()> &end);
+    /// Ends the job with Offline, without asking, when the server named by @p key (a project folder
+    /// or a server address) did not answer less than loreReachabilityReuseMs ago, or a question to
+    /// it has been waiting for less than loreQuestionRetryMs.
+    bool stopIfRecentlyUnreachable(const QString &key, const QString &failText);
+    /// Remembers whether the server named by @p key answered.
+    void recordReachability(const QString &key, bool reachable);
+    /// True when the server named by @p key did not answer less than loreReachabilityReuseMs ago.
+    bool recentlyUnreachable(const QString &key) const;
+    /// The question of requireProjectServer() and requireServer(). @p readsStatus: the answer is
+    /// a status's remote_available; otherwise the call's own success.
+    void askServer(const QString &key, const LoreGlobals &globals, const LoreCall::Starter &starter, bool readsStatus,
+                   const std::function<void()> &then, const QString &failText, const EventHandler &onEvent);
 
     QPointer<KisVersioningJob> m_job;
     bool m_flushBeforeEnd {false};

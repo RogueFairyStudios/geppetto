@@ -46,6 +46,12 @@ public:
             fail(KisVersioningJob::Failed, failText());
             return;
         }
+        requireServer(m_project.serverAddress, [this]() { clone(); }, failText());
+    }
+
+private:
+    void clone()
+    {
         LoreGlobals g = globals();
         g.repositoryPath = lorePath(m_temporary.filePath(QStringLiteral("tree")));
         g.workingDirectory = lorePath(m_temporary.path());
@@ -78,7 +84,6 @@ public:
             });
     }
 
-private:
     QString failText() const
     {
         return i18n("Could not list the folders of %1.", m_project.name);

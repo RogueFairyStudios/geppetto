@@ -6,6 +6,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QSignalSpy>
@@ -461,6 +462,195 @@ void LoreDriverTest::testUnsettledDivergenceIsReportedAgain()
     const Outcome accepted = run(restarted.synchronise(pair.pathB, "settled"));
     VERIFY_OK(accepted);
     QVERIFY(accepted.result.value<SyncResult>().divergences.isEmpty());
+}
+
+void LoreDriverTest::testPreparedButNotCreatedVersionIsSentNext_data()
+{
+    QTest::addColumn<bool>("serverAhead");
+    QTest::newRow("server not ahead") << false;
+    QTest::newRow("server ahead") << true;
+}
+
+void LoreDriverTest::testPreparedButNotCreatedVersionIsSentNext()
+{
+    REQUIRE_BACKEND();
+    QFETCH(bool, serverAhead);
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Pair pair;
+    QVERIFY2(setUpPair(dir.path(), &pair, {{"base.kra", "base"}}), "could not set up two copies of the project");
+
+    // Cancelled once the change is being prepared: it is prepared, but no version is created. The
+    // library then reports the file as prepared and no longer as changed on disk.
+    QVERIFY(writeFile(pair.pathA, "base.kra", "changed, prepared, not a version yet"));
+    KisVersioningJob *job = pair.a->synchronise(pair.pathA, "first");
+    connect(job, &KisVersioningJob::progress, job, [job](qint64, qint64, const QString &label) {
+        if (label == QLatin1String("Preparing your files")) {
+            job->requestCancel();
+        }
+    });
+    const Outcome cancelled = run(job);
+    QVERIFY2(cancelled.done, "the job did not finish in time");
+    QCOMPARE(cancelled.error, KisVersioningJob::Cancelled);
+    // Still a change of this computer, in no version.
+    const Outcome state = run(pair.a->status(pair.pathA));
+    VERIFY_OK(state);
+    QMap<QString, FileState> states;
+    for (const FileStatus &file : state.result.value<ProjectStatus>().files) {
+        states.insert(file.path, file.state);
+    }
+    QVERIFY(states.value("base.kra", FileState::Unchanged) == FileState::Modified);
+    QCOMPARE(historyOf(pair.a.data(), pair.pathA, "base.kra").size(), 1);
+
+    if (serverAhead) {
+        QVERIFY(writeFile(pair.pathB, "outro.kra", "from the second"));
+        VERIFY_OK(run(pair.b->synchronise(pair.pathB, "second")));
+    }
+
+    // The next synchronisation creates the version of what was prepared, and sends it.
+    const Outcome again = run(pair.a->synchronise(pair.pathA, QString()));
+    VERIFY_OK(again);
+    const SyncResult result = again.result.value<SyncResult>();
+    QVERIFY(result.divergences.isEmpty());
+    QVERIFY(result.sent.contains("base.kra"));
+    QVERIFY(!result.pendingUpload);
+    if (serverAhead) {
+        QVERIFY(result.received.contains("outro.kra"));
+        QCOMPARE(readFile(QDir(pair.pathA).filePath("outro.kra")), QByteArray("from the second"));
+    }
+
+    VERIFY_OK(run(pair.b->synchronise(pair.pathB, QString())));
+    QCOMPARE(readFile(QDir(pair.pathB).filePath("base.kra")), QByteArray("changed, prepared, not a version yet"));
+}
+
+void LoreDriverTest::testSetFoldersRefusesLocalChanges()
+{
+    REQUIRE_BACKEND();
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Pair pair;
+    QVERIFY2(setUpPair(dir.path(), &pair, {{"ui/a.kra", "ui base"}, {"concepts/b.kra", "concepts base"}}),
+             "could not set up two copies of the project");
+
+    QVERIFY(writeFile(pair.pathB, "ui/a.kra", "changed here"));
+    const Outcome refused = run(pair.b->setFolders(pair.pathB, {"ui"}));
+    QVERIFY2(refused.done, "the job did not finish in time");
+    QCOMPARE(refused.error, KisVersioningJob::Failed);
+    // Refused by the driver itself, before any call that receives.
+    QCOMPARE(refused.errorText, QString("Synchronize the project before changing its folders."));
+
+    // Nothing changed on disk, and no version was created.
+    QCOMPARE(readFile(QDir(pair.pathB).filePath("ui/a.kra")), QByteArray("changed here"));
+    QCOMPARE(readFile(QDir(pair.pathB).filePath("concepts/b.kra")), QByteArray("concepts base"));
+    QCOMPARE(historyOf(pair.b.data(), pair.pathB, "ui/a.kra").size(), 1);
+    const Outcome state = run(pair.b->status(pair.pathB));
+    VERIFY_OK(state);
+    bool modified = false;
+    for (const FileStatus &file : state.result.value<ProjectStatus>().files) {
+        modified = modified || (file.path == QLatin1String("ui/a.kra") && file.state == FileState::Modified);
+    }
+    QVERIFY(modified);
+    QCOMPARE(state.result.value<ProjectStatus>().pendingUpload, 0);
+}
+
+void LoreDriverTest::testSetFoldersRefusesUnsentVersion_data()
+{
+    QTest::addColumn<QStringList>("folders");
+    // The folders the second person already has: the library's sync then receives with a merge.
+    QTest::newRow("same folders") << QStringList({"concepts", "ui"});
+    QTest::newRow("fewer folders") << QStringList({"ui"});
+}
+
+void LoreDriverTest::testSetFoldersRefusesUnsentVersion()
+{
+    REQUIRE_BACKEND();
+    QFETCH(QStringList, folders);
+    const QByteArray base("line 1\nline 2\nline 3\nline 4\nline 5\nline 6\n");
+    const QByteArray first("line 1 by the first\nline 2\nline 3\nline 4\nline 5\nline 6\n");
+    const QByteArray second("line 1\nline 2\nline 3\nline 4\nline 5\nline 6 by the second\n");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Pair pair;
+    QVERIFY2(setUpPair(dir.path(), &pair, {{"ui/notas.txt", base}, {"concepts/b.kra", "concepts base"}}),
+             "could not set up two copies of the project");
+
+    // On a clean project, up to date, choosing folders works.
+    VERIFY_OK(run(pair.b->setFolders(pair.pathB, {"concepts", "ui"})));
+
+    // The first person sends a change; the second makes a version of another line with no network.
+    QVERIFY(writeFile(pair.pathA, "ui/notas.txt", first));
+    VERIFY_OK(run(pair.a->synchronise(pair.pathA, "first")));
+    setOffline(pair.b.data(), true);
+    QVERIFY(writeFile(pair.pathB, "ui/notas.txt", second));
+    const Outcome offline = run(pair.b->synchronise(pair.pathB, "second, offline"));
+    VERIFY_OK(offline);
+    QVERIFY(offline.result.value<SyncResult>().pendingUpload);
+    setOffline(pair.b.data(), false);
+
+    // Choosing folders would receive the first person's change over the unsent version.
+    const Outcome refused = run(pair.b->setFolders(pair.pathB, folders));
+    QVERIFY2(refused.done, "the job did not finish in time");
+    QCOMPARE(refused.error, KisVersioningJob::Failed);
+    // Refused by the driver itself, before any call that receives.
+    QCOMPARE(refused.errorText, QString("Synchronize the project before changing its folders."));
+
+    // The unsent version is still there, not merged with anything.
+    QCOMPARE(readFile(QDir(pair.pathB).filePath("ui/notas.txt")), second);
+    QCOMPARE(readFile(QDir(pair.pathB).filePath("concepts/b.kra")), QByteArray("concepts base"));
+    const Outcome state = run(pair.b->status(pair.pathB));
+    VERIFY_OK(state);
+    QVERIFY(state.result.value<ProjectStatus>().pendingUpload >= 1);
+    QVERIFY(state.result.value<ProjectStatus>().files.isEmpty());
+
+    // Synchronising shows the two versions of the file, as for any divergence.
+    const Outcome sync = run(pair.b->synchronise(pair.pathB, QString()));
+    VERIFY_OK(sync);
+    const SyncResult result = sync.result.value<SyncResult>();
+    QCOMPARE(result.divergences.size(), 1);
+    QCOMPARE(result.divergences[0].path, QString("ui/notas.txt"));
+    QCOMPARE(readFile(QDir(pair.pathB).filePath("ui/notas.txt")), second);
+}
+
+void LoreDriverTest::testOperationsWithoutNetworkEndOffline()
+{
+    REQUIRE_BACKEND();
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString project = dir.filePath("project");
+    {
+        LoreDriver driver;
+        QVERIFY(createProject(&driver, project));
+        QVERIFY(writeFile(project, "ui/a.kra", "a"));
+        VERIFY_OK(run(driver.synchronise(project, "base")));
+    }
+    const ProjectInfo info = m_project;
+
+    // Each operation with a driver of its own, so that none reuses another's answer.
+    using Start = std::function<KisVersioningJob *(LoreDriver &)>;
+    const QVector<QPair<const char *, Start>> operations = {
+        {"whoIsEditing", [&](LoreDriver &d) { return d.whoIsEditing(project, {"ui/a.kra"}); }},
+        {"announceEditing(true)", [&](LoreDriver &d) { return d.announceEditing(project, "ui/a.kra", true); }},
+        {"announceEditing(false)", [&](LoreDriver &d) { return d.announceEditing(project, "ui/a.kra", false); }},
+        {"listProjects", [&](LoreDriver &d) { return d.listProjects(server()); }},
+        {"listFolders", [&](LoreDriver &d) { return d.listFolders(info); }},
+        {"downloadProject", [&](LoreDriver &d) { return d.downloadProject(info, dir.filePath("second"), QStringList()); }},
+        {"setFolders", [&](LoreDriver &d) { return d.setFolders(project, {"ui"}); }},
+    };
+    for (const auto &operation : operations) {
+        LoreDriver driver;
+        driver.setIdentityForTesting(QStringLiteral("A"));
+        driver.setOfflineForTesting(true);
+        QElapsedTimer timer;
+        timer.start();
+        const Outcome outcome = run(operation.second(driver));
+        QVERIFY2(outcome.done, operation.first);
+        QVERIFY2(outcome.error == KisVersioningJob::Offline,
+                 qPrintable(QStringLiteral("%1: %2").arg(operation.first, outcome.errorText)));
+        QVERIFY(!outcome.errorText.isEmpty());
+        QVERIFY2(timer.elapsed() < 10000, operation.first);
+    }
+    // The download left nothing behind.
+    QVERIFY(!QFileInfo::exists(dir.filePath("second")));
 }
 
 SIMPLE_TEST_MAIN(LoreDriverTest)

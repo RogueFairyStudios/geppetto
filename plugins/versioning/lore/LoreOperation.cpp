@@ -5,6 +5,7 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QTimer>
 
 #include <klocalizedstring.h>
 
@@ -72,13 +73,18 @@ QString loreRelativePath(const QString &path)
     return clean;
 }
 
-QString loreRepositoryUrl(const KisVersioning::ProjectInfo &project)
+QString loreServerKey(const QString &serverAddress)
 {
-    QString server = project.serverAddress.trimmed();
+    QString server = serverAddress.trimmed();
     while (server.endsWith(QLatin1Char('/'))) {
         server.chop(1);
     }
-    return server + QLatin1Char('/') + project.name;
+    return server;
+}
+
+QString loreRepositoryUrl(const KisVersioning::ProjectInfo &project)
+{
+    return loreServerKey(project.serverAddress) + QLatin1Char('/') + project.name;
 }
 
 bool isLoreProject(const QString &localPath)
@@ -177,6 +183,7 @@ void LoreOperation::runStatus(bool scan, const std::function<void(const LoreStat
                 failFromLore("status", code, rawText, failText);
                 return;
             }
+            recordReachability(m_projectPath, status->remoteAvailable);
             onStatus(*status);
         });
 }
@@ -192,6 +199,129 @@ bool LoreOperation::requireProject()
         return false;
     }
     return true;
+}
+
+bool LoreOperation::recentlyUnreachable(const QString &key) const
+{
+    const auto known = m_settings.memory->reachability.constFind(key);
+    return known != m_settings.memory->reachability.constEnd() && !known->reachable && known->age.isValid()
+        && !known->age.hasExpired(loreReachabilityReuseMs);
+}
+
+void LoreOperation::recordReachability(const QString &key, bool reachable)
+{
+    LoreMemory::Reachability &entry = m_settings.memory->reachability[key];
+    entry.reachable = reachable;
+    entry.age.start();
+}
+
+bool LoreOperation::stopIfRecentlyUnreachable(const QString &key, const QString &failText)
+{
+    const auto known = m_settings.memory->reachability.constFind(key);
+    const bool stillAsking = known != m_settings.memory->reachability.constEnd() && known->asking
+        && !known->askingSince.hasExpired(loreQuestionRetryMs);
+    if (stillAsking || recentlyUnreachable(key)) {
+        fail(KisVersioningJob::Offline, LoreText::forProblem(LoreProblem::Offline, failText));
+        return true;
+    }
+    return false;
+}
+
+void LoreOperation::requireProjectServer(const std::function<void()> &then, const QString &failText)
+{
+    askServer(m_projectPath, globals(),
+        [](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
+            lore_repository_status_args_t args;
+            std::memset(&args, 0, sizeof args);
+            args.revision_only = 1;
+            lore_repository_status_async(globals, &args, callback);
+        },
+        true, then, failText, EventHandler());
+}
+
+void LoreOperation::requireServer(const QString &serverAddress, const std::function<void()> &then, const QString &failText,
+                                  const EventHandler &onEvent)
+{
+    const QString key = loreServerKey(serverAddress);
+    LoreGlobals g = globals();
+    g.repositoryPath.clear();
+    g.workingDirectory.clear();
+    const QByteArray url = key.toUtf8();
+    askServer(key, g,
+        [url](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
+            lore_repository_list_args_t args;
+            std::memset(&args, 0, sizeof args);
+            args.url = toLore(url);
+            lore_repository_list_async(globals, &args, callback);
+        },
+        false, then, failText, onEvent);
+}
+
+void LoreOperation::askServer(const QString &key, const LoreGlobals &globals, const LoreCall::Starter &starter,
+                              bool readsStatus, const std::function<void()> &then, const QString &failText,
+                              const EventHandler &onEvent)
+{
+    if (stopIfRecentlyUnreachable(key, failText)) {
+        return;
+    }
+    if (m_settings.offline && !readsStatus) {
+        // With the library's offline option a listing ends well without asking anyone, so it
+        // cannot tell; that option means no network.
+        recordReachability(key, false);
+        fail(KisVersioningJob::Offline, LoreText::forProblem(LoreProblem::Offline, failText));
+        return;
+    }
+    const std::shared_ptr<LoreMemory> memory = m_settings.memory;
+    LoreMemory::Reachability &asking = memory->reachability[key];
+    asking.asking = true;
+    asking.askingSince.start();
+
+    // The question is not a child of this operation: when the server does not answer, the job
+    // ends without it, and the question must still clear the "asking" mark when it ends.
+    auto *question = new LoreCall();
+    auto available = std::make_shared<bool>(false);
+    auto settled = std::make_shared<bool>(false);
+    const QPointer<LoreOperation> self(this);
+    connect(question, &LoreCall::event, question, [available, settled, onEvent](const LoreEvent &event) {
+        if (event.tag == LORE_EVENT_REPOSITORY_STATUS_REVISION) {
+            *available = event.fields.value(QStringLiteral("remoteAvailable")).toBool();
+        }
+        if (onEvent && !*settled) {
+            onEvent(event);
+        }
+    });
+    connect(question, &LoreCall::completed, question,
+            [question, memory, key, available, readsStatus, settled, self, then, failText](int status, const QString &rawText) {
+                question->deleteLater();
+                const bool reachable = status == 0 && (!readsStatus || *available);
+                LoreMemory::Reachability &entry = memory->reachability[key];
+                entry.asking = false;
+                entry.reachable = reachable;
+                entry.age.start();
+                if (*settled || !self) {
+                    return;
+                }
+                *settled = true;
+                if (status != 0 && classifyLoreError(status, rawText) != LoreProblem::Offline) {
+                    self->failFromLore("asking the server", status, rawText, failText);
+                } else if (!reachable) {
+                    if (status != 0) {
+                        qWarning("Lore: the server did not answer (status %d): %s", status, qUtf8Printable(rawText));
+                    }
+                    self->fail(KisVersioningJob::Offline, LoreText::forProblem(LoreProblem::Offline, failText));
+                } else {
+                    then();
+                }
+            });
+    QTimer::singleShot(loreReachabilityWaitMs, this, [this, settled, failText]() {
+        if (*settled) {
+            return;
+        }
+        *settled = true;
+        qWarning("Lore: the server did not answer within %d ms", loreReachabilityWaitMs);
+        fail(KisVersioningJob::Offline, LoreText::forProblem(LoreProblem::Offline, failText));
+    });
+    question->start(globals.args(), starter);
 }
 
 bool LoreOperation::stopIfCancelled()

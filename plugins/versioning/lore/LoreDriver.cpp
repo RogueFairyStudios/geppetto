@@ -31,6 +31,18 @@ namespace {
 /// What a locked file's owner is on a server that does not know who calls.
 const char unknownOwner[] = "<unknown>";
 
+/// True when this computer has work the server does not have: a change on disk or prepared for a
+/// version, a version not sent, or a merge not finished.
+bool hasLocalWork(const LoreStatus &status)
+{
+    if (status.localAhead) {
+        return true;
+    }
+    return std::any_of(status.files.begin(), status.files.end(), [](const LoreStatusFile &file) {
+        return file.isFile && !isNeverSynced(file.path) && (file.dirty || file.staged || file.conflict);
+    });
+}
+
 /// A rule of a view file for one folder. Characters the rules treat specially are escaped.
 QString viewRuleFor(const QString &folder)
 {
@@ -132,6 +144,8 @@ QString LoreDriver::currentUser() const
 void LoreDriver::setOfflineForTesting(bool offline)
 {
     m_offline = offline;
+    // What the server answered before belongs to the other mode.
+    m_memory->reachability.clear();
 }
 
 void LoreDriver::setIdentityForTesting(const QString &identity)
@@ -249,24 +263,22 @@ KisVersioningJob *LoreDriver::listProjects(const QString &serverAddress)
 {
     auto *job = new KisVersioningJob();
     auto *op = new LoreOperation(job, settings(), QString());
-    const QString address = serverAddress.trimmed();
+    const QString address = loreServerKey(serverAddress);
     const QString failText = i18n("Could not list the projects on the server.");
     if (address.isEmpty()) {
         op->fail(KisVersioningJob::Failed, failText);
         return job;
     }
-    LoreGlobals g = op->globals();
-    g.repositoryPath.clear();
-    g.workingDirectory.clear();
-    const QByteArray url = address.toUtf8();
+    // The listing is itself the question whether the server answers, with its time limit.
     auto projects = std::make_shared<QVector<ProjectInfo>>();
-    op->run(g,
-        [url](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
-            lore_repository_list_args_t args;
-            std::memset(&args, 0, sizeof args);
-            args.url = toLore(url);
-            lore_repository_list_async(globals, &args, callback);
+    op->requireServer(address,
+        [op, projects]() {
+            std::sort(projects->begin(), projects->end(), [](const ProjectInfo &a, const ProjectInfo &b) {
+                return a.name.compare(b.name, Qt::CaseInsensitive) < 0;
+            });
+            op->finish(QVariant::fromValue(*projects));
         },
+        failText,
         [projects, address](const LoreEvent &event) {
             if (event.tag == LORE_EVENT_REPOSITORY_LIST_ENTRY) {
                 ProjectInfo info;
@@ -275,16 +287,6 @@ KisVersioningJob *LoreDriver::listProjects(const QString &serverAddress)
                 info.serverAddress = address;
                 projects->append(info);
             }
-        },
-        [op, projects, failText](int status, const QString &rawText) {
-            if (status != 0) {
-                op->failFromLore("listing projects", status, rawText, failText);
-                return;
-            }
-            std::sort(projects->begin(), projects->end(), [](const ProjectInfo &a, const ProjectInfo &b) {
-                return a.name.compare(b.name, Qt::CaseInsensitive) < 0;
-            });
-            op->finish(QVariant::fromValue(*projects));
         });
     return job;
 }
@@ -301,10 +303,7 @@ KisVersioningJob *LoreDriver::downloadProject(const ProjectInfo &project, const 
     auto *op = new LoreOperation(job, settings(), localPath);
     const QString target = op->projectPath();
     const QString failText = i18n("Could not download %1.", project.name);
-
-    // The folder is created here, so that nothing is left behind if the download fails.
-    const bool existed = QFileInfo::exists(target);
-    if (!QDir().mkpath(target)) {
+    if (target.isEmpty()) {
         op->fail(KisVersioningJob::Failed, failText);
         return job;
     }
@@ -318,39 +317,47 @@ KisVersioningJob *LoreDriver::downloadProject(const ProjectInfo &project, const 
         }
     }
 
-    LoreGlobals g = op->globals();
-    // Every version file is kept in the project's own store, so that a version can be created
-    // with no network.
-    g.cache = true;
-    const QByteArray url = loreRepositoryUrl(project).toUtf8();
-    const QByteArray viewPath = lorePath(view);
-    op->reportProgress(0, 0, i18n("Downloading %1", project.name));
-    op->run(g,
-        [url, viewPath](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
-            lore_repository_clone_args_t args;
-            std::memset(&args, 0, sizeof args);
-            args.repository_url = toLore(url);
-            args.view = toLore(viewPath);
-            lore_repository_clone_async(globals, &args, callback);
-        },
-        [op, project](const LoreEvent &event) {
-            if (event.tag == LORE_EVENT_REPOSITORY_CLONE_PROGRESS) {
-                op->reportProgress(event.fields.value(QStringLiteral("bytesDone")).toLongLong(),
-                                   event.fields.value(QStringLiteral("bytesTotal")).toLongLong(),
-                                   i18n("Downloading %1", project.name));
-            }
-        },
-        [op, viewFolder, target, existed, failText](int status, const QString &rawText) {
-            if (status != 0) {
-                if (!existed) {
-                    QDir(target).removeRecursively();
+    op->requireServer(project.serverAddress, [op, project, target, view, viewFolder, failText]() {
+        // The folder is created here, so that nothing is left behind if the download fails.
+        const bool existed = QFileInfo::exists(target);
+        if (!QDir().mkpath(target)) {
+            op->fail(KisVersioningJob::Failed, failText);
+            return;
+        }
+        LoreGlobals g = op->globals();
+        // Every version file is kept in the project's own store, so that a version can be created
+        // with no network.
+        g.cache = true;
+        const QByteArray url = loreRepositoryUrl(project).toUtf8();
+        const QByteArray viewPath = lorePath(view);
+        op->reportProgress(0, 0, i18n("Downloading %1", project.name));
+        op->run(g,
+            [url, viewPath](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
+                lore_repository_clone_args_t args;
+                std::memset(&args, 0, sizeof args);
+                args.repository_url = toLore(url);
+                args.view = toLore(viewPath);
+                lore_repository_clone_async(globals, &args, callback);
+            },
+            [op, project](const LoreEvent &event) {
+                if (event.tag == LORE_EVENT_REPOSITORY_CLONE_PROGRESS) {
+                    op->reportProgress(event.fields.value(QStringLiteral("bytesDone")).toLongLong(),
+                                       event.fields.value(QStringLiteral("bytesTotal")).toLongLong(),
+                                       i18n("Downloading %1", project.name));
                 }
-                op->failFromLore("download", status, rawText, failText);
-                return;
-            }
-            op->setFlushBeforeEnd(true);
-            op->finish();
-        });
+            },
+            [op, viewFolder, target, existed, failText](int status, const QString &rawText) {
+                if (status != 0) {
+                    if (!existed) {
+                        QDir(target).removeRecursively();
+                    }
+                    op->failFromLore("download", status, rawText, failText);
+                    return;
+                }
+                op->setFlushBeforeEnd(true);
+                op->finish();
+            });
+    }, failText);
     return job;
 }
 
@@ -370,33 +377,41 @@ KisVersioningJob *LoreDriver::setFolders(const QString &localPath, const QString
         return job;
     }
 
-    // Changing the folders receives the latest versions too; without network the call could
-    // wait for minutes, so the network is checked first.
-    op->runStatus(false, [op, viewFolder, view, failText](const LoreStatus &status) {
-        if (op->stopIfCancelled()) {
-            return;
-        }
-        if (!status.remoteAvailable) {
-            op->fail(KisVersioningJob::Offline, LoreText::forProblem(LoreProblem::Offline, failText));
-            return;
-        }
-        const QByteArray viewPath = lorePath(view);
-        op->reportProgress(0, 0, i18n("Changing the folders kept on this computer"));
-        op->run(op->globals(),
-            [viewPath](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
-                lore_revision_sync_args_t args;
-                std::memset(&args, 0, sizeof args);
-                args.view = toLore(viewPath);
-                lore_revision_sync_async(globals, &args, callback);
-            },
-            nullptr,
-            [op, viewFolder, failText](int code, const QString &rawText) {
-                if (code != 0) {
-                    op->failFromLore("changing folders", code, rawText, failText);
-                    return;
-                }
-                op->finish();
-            });
+    // Changing the folders receives the latest versions too, through the library's plain sync,
+    // which would merge text by itself and create the merged version with nobody told. It only
+    // runs on a project with nothing of this computer waiting: no change on disk, no version not
+    // sent, no merge open.
+    op->requireProjectServer([op, viewFolder, view, failText]() {
+        op->runStatus(true, [op, viewFolder, view, failText](const LoreStatus &status) {
+            if (op->stopIfCancelled()) {
+                return;
+            }
+            if (hasLocalWork(status)) {
+                op->fail(KisVersioningJob::Failed, i18n("Synchronize the project before changing its folders."));
+                return;
+            }
+            if (!status.remoteAvailable) {
+                op->fail(KisVersioningJob::Offline, LoreText::forProblem(LoreProblem::Offline, failText));
+                return;
+            }
+            const QByteArray viewPath = lorePath(view);
+            op->reportProgress(0, 0, i18n("Changing the folders kept on this computer"));
+            op->run(op->globals(),
+                [viewPath](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
+                    lore_revision_sync_args_t args;
+                    std::memset(&args, 0, sizeof args);
+                    args.view = toLore(viewPath);
+                    lore_revision_sync_async(globals, &args, callback);
+                },
+                nullptr,
+                [op, viewFolder, failText](int code, const QString &rawText) {
+                    if (code != 0) {
+                        op->failFromLore("changing folders", code, rawText, failText);
+                        return;
+                    }
+                    op->finish();
+                });
+        }, failText);
     }, failText);
     return job;
 }
@@ -554,38 +569,40 @@ KisVersioningJob *LoreDriver::announceEditing(const QString &localPath, const QS
     const QByteArray filePath = file.toUtf8();
     const QString failText = editing ? i18n("Could not tell the others that you are editing %1.", file)
                                      : i18n("Could not tell the others that you stopped editing %1.", file);
-    op->run(op->globals(),
-        [filePath, editing](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
-            const lore_string_t paths[] = {toLore(filePath)};
-            // An empty branch is the project's current one; an empty owner is the caller.
-            if (editing) {
-                lore_lock_file_acquire_args_t args;
-                std::memset(&args, 0, sizeof args);
-                args.paths.ptr = paths;
-                args.paths.count = 1;
-                lore_lock_file_acquire_async(globals, &args, callback);
-            } else {
-                lore_lock_file_release_args_t args;
-                std::memset(&args, 0, sizeof args);
-                args.paths.ptr = paths;
-                args.paths.count = 1;
-                lore_lock_file_release_async(globals, &args, callback);
-            }
-        },
-        nullptr,
-        [op, file, failText](int status, const QString &rawText) {
-            if (status != 0) {
-                if (classifyLoreError(status, rawText) == LoreProblem::LockedByOther) {
-                    // Someone else's notice is there first; the panel says nothing.
-                    qWarning("Lore: editing notice refused (status %d): %s", status, qUtf8Printable(rawText));
-                    op->fail(KisVersioningJob::Failed, i18n("Someone else is already editing %1.", file));
+    op->requireProjectServer([op, file, filePath, editing, failText]() {
+        op->run(op->globals(),
+            [filePath, editing](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
+                const lore_string_t paths[] = {toLore(filePath)};
+                // An empty branch is the project's current one; an empty owner is the caller.
+                if (editing) {
+                    lore_lock_file_acquire_args_t args;
+                    std::memset(&args, 0, sizeof args);
+                    args.paths.ptr = paths;
+                    args.paths.count = 1;
+                    lore_lock_file_acquire_async(globals, &args, callback);
+                } else {
+                    lore_lock_file_release_args_t args;
+                    std::memset(&args, 0, sizeof args);
+                    args.paths.ptr = paths;
+                    args.paths.count = 1;
+                    lore_lock_file_release_async(globals, &args, callback);
+                }
+            },
+            nullptr,
+            [op, file, failText](int status, const QString &rawText) {
+                if (status != 0) {
+                    if (classifyLoreError(status, rawText) == LoreProblem::LockedByOther) {
+                        // Someone else's notice is there first; the panel says nothing.
+                        qWarning("Lore: editing notice refused (status %d): %s", status, qUtf8Printable(rawText));
+                        op->fail(KisVersioningJob::Failed, i18n("Someone else is already editing %1.", file));
+                        return;
+                    }
+                    op->failFromLore("editing notice", status, rawText, failText);
                     return;
                 }
-                op->failFromLore("editing notice", status, rawText, failText);
-                return;
-            }
-            op->finish();
-        });
+                op->finish();
+            });
+    }, failText);
     return job;
 }
 
@@ -601,33 +618,36 @@ KisVersioningJob *LoreDriver::whoIsEditing(const QString &localPath, const QStri
         wanted.insert(loreRelativePath(path));
     }
     auto editing = std::make_shared<QVector<EditingInfo>>();
-    op->run(op->globals(),
-        [](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
-            lore_lock_file_query_args_t args;
-            std::memset(&args, 0, sizeof args);
-            lore_lock_file_query_async(globals, &args, callback);
-        },
-        [editing, wanted](const LoreEvent &event) {
-            if (event.tag != LORE_EVENT_LOCK_FILE_QUERY) {
-                return;
-            }
-            const QString path = loreRelativePath(event.fields.value(QStringLiteral("path")).toString());
-            const QString owner = event.fields.value(QStringLiteral("owner")).toString();
-            // A server that does not know who calls names every owner "<unknown>": never report
-            // a nameless editor.
-            if (wanted.contains(path) && !owner.isEmpty() && owner != QLatin1String(unknownOwner)) {
-                EditingInfo info;
-                info.path = path;
-                info.user = owner;
-                editing->append(info);
-            }
-        },
-        [op, editing](int status, const QString &rawText) {
-            if (status != 0) {
-                op->failFromLore("asking who is editing", status, rawText, i18n("Could not find out who is editing."));
-                return;
-            }
-            op->finish(QVariant::fromValue(*editing));
-        });
+    const QString failText = i18n("Could not find out who is editing.");
+    op->requireProjectServer([op, editing, wanted, failText]() {
+        op->run(op->globals(),
+            [](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
+                lore_lock_file_query_args_t args;
+                std::memset(&args, 0, sizeof args);
+                lore_lock_file_query_async(globals, &args, callback);
+            },
+            [editing, wanted](const LoreEvent &event) {
+                if (event.tag != LORE_EVENT_LOCK_FILE_QUERY) {
+                    return;
+                }
+                const QString path = loreRelativePath(event.fields.value(QStringLiteral("path")).toString());
+                const QString owner = event.fields.value(QStringLiteral("owner")).toString();
+                // A server that does not know who calls names every owner "<unknown>": never report
+                // a nameless editor.
+                if (wanted.contains(path) && !owner.isEmpty() && owner != QLatin1String(unknownOwner)) {
+                    EditingInfo info;
+                    info.path = path;
+                    info.user = owner;
+                    editing->append(info);
+                }
+            },
+            [op, editing, failText](int status, const QString &rawText) {
+                if (status != 0) {
+                    op->failFromLore("asking who is editing", status, rawText, failText);
+                    return;
+                }
+                op->finish(QVariant::fromValue(*editing));
+            });
+    }, failText);
     return job;
 }

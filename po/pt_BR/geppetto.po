@@ -369,3 +369,7 @@ msgstr "Não foi possível resolver as diferenças em %1."
 #, kde-format
 msgid "Settling the differences in %1"
 msgstr "Resolvendo as diferenças em %1"
+
+#: plugins/versioning/lore/LoreDriver.cpp
+msgid "Synchronize the project before changing its folders."
+msgstr "Sincronize o projeto antes de mudar as pastas dele."

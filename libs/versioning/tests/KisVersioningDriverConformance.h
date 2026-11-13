@@ -310,6 +310,39 @@ private Q_SLOTS:
         QCOMPARE(readFile(QDir(pair.pathB).filePath("base.kra")), QByteArray("base changed"));
     }
 
+    // The most common case: each person changes a different file, and both synchronise.
+    void testChangesToDifferentFilesReachBoth()
+    {
+        REQUIRE_FEATURE(KisVersioning::RemoteProjects);
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        Pair pair;
+        QVERIFY2(setUpPair(dir.path(), &pair, {{"x.kra", "x base"}, {"y.kra", "y base"}}),
+                 "could not set up two copies of the project");
+
+        QVERIFY(writeFile(pair.pathA, "x.kra", "x changed by the first"));
+        QVERIFY(writeFile(pair.pathB, "y.kra", "y changed by the second"));
+        VERIFY_OK(run(pair.a->synchronise(pair.pathA, "first")));
+
+        const Outcome second = run(pair.b->synchronise(pair.pathB, "second"));
+        VERIFY_OK(second);
+        const KisVersioning::SyncResult result = second.result.value<KisVersioning::SyncResult>();
+        QVERIFY(result.divergences.isEmpty());
+        QVERIFY(result.received.contains("x.kra"));
+        QVERIFY(!result.received.contains("y.kra"));
+        QVERIFY(result.sent.contains("y.kra"));
+        QVERIFY(!result.pendingUpload);
+        QCOMPARE(readFile(QDir(pair.pathB).filePath("x.kra")), QByteArray("x changed by the first"));
+        QCOMPARE(readFile(QDir(pair.pathB).filePath("y.kra")), QByteArray("y changed by the second"));
+
+        const Outcome first = run(pair.a->synchronise(pair.pathA, QString()));
+        VERIFY_OK(first);
+        QVERIFY(first.result.value<KisVersioning::SyncResult>().divergences.isEmpty());
+        QVERIFY(first.result.value<KisVersioning::SyncResult>().received.contains("y.kra"));
+        QCOMPARE(readFile(QDir(pair.pathA).filePath("x.kra")), QByteArray("x changed by the first"));
+        QCOMPARE(readFile(QDir(pair.pathA).filePath("y.kra")), QByteArray("y changed by the second"));
+    }
+
     // Both people change one file. Each content kind must end the same way: a backend may treat
     // text differently from binary content (merge it line by line), but the artist's file is never
     // changed without being told.

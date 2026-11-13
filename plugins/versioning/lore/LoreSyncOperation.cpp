@@ -197,9 +197,14 @@ private:
                 mergedByLore << file.path;
             } else if (file.dirty && !file.conflict && !isNeverSynced(file.path)) {
                 m_toStage << file.path;
+            } else if (file.staged && !file.merged && !file.conflict && !isNeverSynced(file.path)) {
+                // Prepared by an earlier synchronisation that did not create its version (cancelled,
+                // failed, or the application stopped in between). The library can report such a file
+                // as not dirty once the file on disk matches what was staged; it is still work to send.
+                m_alreadyStaged << file.path;
             }
         }
-        m_changedFiles = m_toStage.size() + mergedConflicts;
+        m_changedFiles = m_toStage.size() + m_alreadyStaged.size() + mergedConflicts;
 
         if (!unresolved.isEmpty() || !mergedByLore.isEmpty()) {
             reportOpenDivergences(unresolved, mergedByLore);
@@ -262,7 +267,7 @@ private:
     /// created on this computer only (the folder was downloaded with the local cache).
     void commit()
     {
-        if (m_toStage.isEmpty() && !m_mergeInProgress) {
+        if (m_toStage.isEmpty() && m_alreadyStaged.isEmpty() && !m_mergeInProgress) {
             afterCommit();
             return;
         }
@@ -294,6 +299,7 @@ private:
                 }
                 m_committed = true;
                 appendUnique(&unsent(), m_toStage);
+                appendUnique(&unsent(), m_alreadyStaged);
                 if (m_mergeInProgress) {
                     keptAfterMerge().clear();
                 }
@@ -467,6 +473,7 @@ private:
             m_merged = true;
             m_mergeInProgress = true;
             m_toStage.clear();
+            m_alreadyStaged.clear();
             m_changedFiles = 0;
             m_mergedFiles = mergedFiles;
             commit();
@@ -584,6 +591,7 @@ private:
     QString m_notes;
     LoreStatus m_status;
     QStringList m_toStage;
+    QStringList m_alreadyStaged;   ///< staged by an earlier call, not yet in a version
     int m_changedFiles {0};
     int m_mergedFiles {0};
     bool m_mergeInProgress {false};
