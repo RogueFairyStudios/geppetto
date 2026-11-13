@@ -180,6 +180,8 @@ void KisVersioningSyncSession::onResolved(KisVersioningJob *job)
     if (m_resolvingTheirs) {
         // The file now holds the other version: an open, unchanged document must show it,
         // or the next save would put mine back over it. Mine is safe in the conflict copy.
+        // The same path may have been reloaded for an earlier version: this one is newer.
+        m_reloaded.removeAll(m_resolvingPath);
         reloadIfClean(m_resolvingPath);
     }
     resolveNext();
@@ -208,6 +210,12 @@ void KisVersioningSyncSession::startKeepBoth(const QString &path)
     const QString fileName = path.mid(slash + 1);
     const QString directoryPath = root.filePath(folder);
 
+    // The artist can save this file while the copy runs. What the file was when we started is
+    // compared with what it is when the copy ends: a different file means a copy of old content.
+    const QFileInfo before(root.filePath(path));
+    m_keepBothSize = before.size();
+    m_keepBothModified = before.lastModified();
+
     // Everything in the folder counts as taken, folders and hidden files included.
     const QStringList taken = QDir(directoryPath).entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
     const QString user = m_driver->currentUser();
@@ -232,6 +240,17 @@ void KisVersioningSyncSession::onCopyFinished(bool ok, const QString &name)
 {
     const QString path = m_keepBothPath;
     const QString fileName = path.mid(path.lastIndexOf(QLatin1Char('/')) + 1);
+    if (ok) {
+        const QFileInfo now(QDir(m_projectPath).filePath(path));
+        if (!now.exists() || now.size() != m_keepBothSize || now.lastModified() != m_keepBothModified) {
+            // The working file changed during the copy, so the copy may hold older content than
+            // the file; replacing the file with the other version would lose the newer save.
+            QFile::remove(QDir(m_projectPath).filePath(m_keepBothFolder + name));
+            endWithError(KisVersioningJob::Failed,
+                         i18n("%1 changed while it was being copied, so it was left as it is. Synchronise again.", fileName));
+            return;
+        }
+    }
     if (!ok) {
         endWithError(KisVersioningJob::Failed,
                      i18n("Could not keep a copy of %1, so it was left as it is.", fileName));

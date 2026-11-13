@@ -26,6 +26,8 @@ private Q_SLOTS:
     void testMarkerFailureRemovesCopyAndStops();
     void testNewerVersionIsReloadedAfterKeepBoth();
     void testDestroyedDuringCopyIsSafe();
+    void testWorkingFileChangedDuringCopyFails();
+    void testSecondKeepBothOfSamePathIsReloaded();
     void testDeleteVersusModifyKeepsTheChange();
     void testServerChangedRetriesUpToThreeTimes();
     void testOfflineIsPendingUpload();

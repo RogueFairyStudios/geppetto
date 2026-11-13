@@ -4,6 +4,7 @@
 #ifndef KISVERSIONINGSYNCSESSION_H
 #define KISVERSIONINGSYNCSESSION_H
 
+#include <QDateTime>
 #include <QList>
 #include <QObject>
 #include <QVector>
@@ -101,6 +102,8 @@ private:
     QString m_keepBothPath;
     QString m_keepBothFolder;
     QString m_keepBothUser;
+    qint64 m_keepBothSize {0};
+    QDateTime m_keepBothModified;
     Report m_report;
 };
 

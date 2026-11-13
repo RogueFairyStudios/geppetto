@@ -379,12 +379,71 @@ void KisVersioningSyncSessionTest::testDestroyedDuringCopyIsSafe()
     f.driver.queueSyncResult(resultWithDivergence("ui/botao.kra", DivergenceKind::BothModified));
 
     auto *session = new KisVersioningSyncSession(&f.driver, &f.host);
+    // The session asks for the user just before it starts the copy. The queued deletion is posted
+    // then, so it is ahead of anything the copy's end can post: the session is gone first, always.
+    bool asked = false;
+    f.driver.setCurrentUserHook([&]() {
+        if (!asked) {
+            asked = true;
+            QMetaObject::invokeMethod(&f.driver, [session]() { delete session; }, Qt::QueuedConnection);
+        }
+    });
     session->start(f.dir.path(), "notes");
-    QTest::qWait(30);  // the synchronise job finishes and the copy starts
-    delete session;
+    QTRY_VERIFY(asked);
     QTest::qWait(300); // the copy ends with nobody listening
 
     QCOMPARE(f.driver.callCount("resolve"), 0);
+}
+
+void KisVersioningSyncSessionTest::testWorkingFileChangedDuringCopyFails()
+{
+    Fixture f;
+    f.driver.setCurrentUser("Bruno");
+    f.write("ui/botao.kra", "mine");
+    f.driver.setTheirContent("ui/botao.kra", "theirs");
+    // The artist saves the same file after the session captured its state: same size, later time.
+    bool saved = false;
+    f.driver.setCurrentUserHook([&]() {
+        if (!saved) {
+            saved = true;
+            f.write("ui/botao.kra", "MINE");
+            QFile file(f.path("ui/botao.kra"));
+            QVERIFY(file.open(QIODevice::ReadWrite));
+            QVERIFY(file.setFileTime(QDateTime::currentDateTime().addSecs(10), QFileDevice::FileModificationTime));
+        }
+    });
+    f.driver.queueSyncResult(resultWithDivergence("ui/botao.kra", DivergenceKind::BothModified));
+
+    const auto report = f.run();
+
+    QCOMPARE(report.error, KisVersioningJob::Failed);
+    QVERIFY(!report.errorText.isEmpty());
+    QCOMPARE(f.driver.callCount("resolve"), 0);
+    QCOMPARE(f.read("ui/botao.kra"), QByteArray("MINE"));
+    QCOMPARE(QDir(f.path("ui")).entryList(QDir::Files), QStringList({"botao.kra"}));
+    QVERIFY(report.conflictCopies.isEmpty());
+}
+
+void KisVersioningSyncSessionTest::testSecondKeepBothOfSamePathIsReloaded()
+{
+    Fixture f;
+    f.driver.setCurrentUser("Bruno");
+    f.write("ui/botao.kra", "mine");
+    f.driver.setTheirContent("ui/botao.kra", "theirs");
+    f.host.openAndUnmodified = QStringList{f.path("ui/botao.kra")};
+    f.driver.queueSyncResult(resultWithDivergence("ui/botao.kra", DivergenceKind::BothModified));
+    f.driver.queueSyncResult(resultWithDivergence("ui/botao.kra", DivergenceKind::BothModified));
+
+    const auto report = f.run();
+
+    QCOMPARE(report.error, KisVersioningJob::NoError);
+    QCOMPARE(f.host.reloaded.size(), 2);
+    QStringList order;
+    for (const QString &line : f.log) {
+        if (line.startsWith("driver:resolve ")) order << "resolve";
+        if (line.startsWith("host:reloadDocument ")) order << "reload";
+    }
+    QCOMPARE(order, QStringList({"resolve", "reload", "resolve", "reload"}));
 }
 
 void KisVersioningSyncSessionTest::testDeleteVersusModifyKeepsTheChange()

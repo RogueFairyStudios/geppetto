@@ -33,3 +33,8 @@ msgstr "Não foi possível guardar uma cópia de %1; o arquivo foi deixado como 
 #, kde-format
 msgid "Could not mark the copy of %1 as a conflict to resolve, so it was left as it is."
 msgstr "Não foi possível marcar a cópia de %1 como conflito a resolver; o arquivo foi deixado como estava."
+
+#: libs/versioning/KisVersioningSyncSession.cpp
+#, kde-format
+msgid "%1 changed while it was being copied, so it was left as it is. Synchronise again."
+msgstr "%1 mudou durante a cópia; o arquivo foi deixado como estava. Sincronize de novo."
