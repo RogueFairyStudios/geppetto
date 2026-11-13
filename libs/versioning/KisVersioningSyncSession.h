@@ -65,7 +65,7 @@ public:
     };
 
     /// The most calls to driver->synchronise() in one session.
-    static const int MaxAttempts = 3;
+    static constexpr int MaxAttempts = 3;
 
     KisVersioningSyncSession(KisVersioningDriver *driver, KisVersioningDocumentHost *host, QObject *parent = nullptr);
     ~KisVersioningSyncSession() override;
