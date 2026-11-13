@@ -9,6 +9,7 @@
 #include <QLockFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QThreadPool>
 
 #include <KisVersioningDriverRegistry.h>
 
@@ -310,6 +311,32 @@ void LocalFolderDriverTest::testDefaultNotesAreStoredNotTranslatedOnRead()
     QCOMPARE(history.size(), 1);
     QCOMPARE(history[0].notes, QString("3 files changed"));
     QVERIFY(readFile(QDir(project).filePath(".geppetto/versions/index.json")).contains("3 files changed"));
+}
+
+void LocalFolderDriverTest::testWorkerDoesNotNeedTheJobThreadToProduceDefaultNotes()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    LocalFolderDriver driver;
+    const QString project = dir.filePath("project");
+    QVERIFY(createProject(&driver, project));
+    QVERIFY(writeFile(project, "a.kra", "a"));
+    QVERIFY(writeFile(project, "b.kra", "b"));
+
+    // This thread processes no events while the worker runs, as when the application is quitting:
+    // a worker that waited for this thread would never finish. The wait is bounded so that such a
+    // regression fails the test instead of hanging it.
+    KisVersioningJob *job = driver.synchronise(project, QString());
+    const bool workerFinished = QThreadPool::globalInstance()->waitForDone(10000);
+
+    // Deliver the job's signals now (this also frees a worker that is still waiting, after a regression).
+    const Outcome outcome = run(job);
+    QVERIFY2(workerFinished, "the worker waited for the thread of the job");
+    VERIFY_OK(outcome);
+
+    const QVector<VersionInfo> history = historyOf(&driver, project, "a.kra");
+    QCOMPARE(history.size(), 1);
+    QCOMPARE(history[0].notes, QString("2 files changed"));
 }
 
 SIMPLE_TEST_MAIN(LocalFolderDriverTest)

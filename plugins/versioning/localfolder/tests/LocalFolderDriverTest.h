@@ -30,6 +30,7 @@ private Q_SLOTS:
     void testTwoDriversOnOneFolderKeepEveryVersion();
     void testLockedStoreFailsWithoutWriting();
     void testDefaultNotesAreStoredNotTranslatedOnRead();
+    void testWorkerDoesNotNeedTheJobThreadToProduceDefaultNotes();
 };
 
 #endif // LOCALFOLDERDRIVERTEST_H

@@ -86,8 +86,6 @@ struct Version {
 };
 
 using Cancelled = std::function<bool()>;
-/// Makes the default summary of a version; it runs on the job's thread, where translating is done.
-using Summary = std::function<QString(int)>;
 
 const char lockFileName[] = "lock";
 std::atomic<int> lockTimeoutMs {10000};
@@ -391,8 +389,7 @@ Outcome doStatus(const QString &root)
     return outcome;
 }
 
-Outcome doSynchronise(const QString &root, const QString &author, const QString &notes, const Cancelled &cancelled,
-                      const Summary &summary)
+Outcome doSynchronise(const QString &root, const QString &author, const QString &notes, const Cancelled &cancelled)
 {
     QMutexLocker locker(storeMutex());
     if (!isProjectFolder(root)) {
@@ -447,7 +444,7 @@ Outcome doSynchronise(const QString &root, const QString &author, const QString 
     version.number = versions.isEmpty() ? 1 : versions.last().number + 1;
     version.author = author;
     version.date = QDateTime::currentDateTimeUtc();
-    version.notes = notes.trimmed().isEmpty() ? summary(changedPaths.size() + deletedPaths.size()) : notes;
+    version.notes = notes.trimmed().isEmpty() ? defaultNotes(changedPaths.size() + deletedPaths.size()) : notes;
 
     // Copies first and index last: the index is what makes the version exist. The index was read
     // under the lock and has no entry for this number, so a folder already named like it holds
@@ -610,10 +607,10 @@ QString textFor(const Outcome &outcome)
 /**
  * Runs @p work on a worker thread and ends the job on the job's thread. The job has no parent and
  * the worker only holds copies of its arguments, so both are safe when the driver is destroyed
- * first. The job deletes itself once it has ended. The worker may ask the job's thread for the
- * default summary of a version (the job's thread runs its event loop, as jobs require).
+ * first. The job deletes itself once it has ended. The worker never waits on another thread: it
+ * translates the default summary of a version itself (KI18n may be used off the interface thread).
  */
-KisVersioningJob *startJob(const std::function<Outcome(const Cancelled &, const Summary &)> &work)
+KisVersioningJob *startJob(const std::function<Outcome(const Cancelled &)> &work)
 {
     auto *job = new KisVersioningJob();
     auto *watcher = new QFutureWatcher<Outcome>(job);
@@ -628,13 +625,7 @@ KisVersioningJob *startJob(const std::function<Outcome(const Cancelled &, const 
     });
     // The job ends only through the watcher, so the pointer stays valid for as long as the worker runs.
     watcher->setFuture(QtConcurrent::run([work, job]() {
-        return work([job]() { return job->cancelRequested(); },
-                    [job](int changedFiles) {
-                        QString text;
-                        QMetaObject::invokeMethod(job, [&text, changedFiles]() { text = defaultNotes(changedFiles); },
-                                                  Qt::BlockingQueuedConnection);
-                        return text;
-                    });
+        return work([job]() { return job->cancelRequested(); });
     }));
     return job;
 }
@@ -699,7 +690,7 @@ KisVersioningJob *LocalFolderDriver::listFolders(const ProjectInfo &)
 
 KisVersioningJob *LocalFolderDriver::downloadProject(const ProjectInfo &, const QString &localPath, const QStringList &)
 {
-    return startJob([localPath](const Cancelled &, const Summary &) { return doDownload(localPath); });
+    return startJob([localPath](const Cancelled &) { return doDownload(localPath); });
 }
 
 KisVersioningJob *LocalFolderDriver::setFolders(const QString &, const QStringList &)
@@ -709,14 +700,14 @@ KisVersioningJob *LocalFolderDriver::setFolders(const QString &, const QStringLi
 
 KisVersioningJob *LocalFolderDriver::status(const QString &localPath)
 {
-    return startJob([localPath](const Cancelled &, const Summary &) { return doStatus(localPath); });
+    return startJob([localPath](const Cancelled &) { return doStatus(localPath); });
 }
 
 KisVersioningJob *LocalFolderDriver::synchronise(const QString &localPath, const QString &notes)
 {
     const QString author = currentUser();
-    return startJob([localPath, author, notes](const Cancelled &cancelled, const Summary &summary) {
-        return doSynchronise(localPath, author, notes, cancelled, summary);
+    return startJob([localPath, author, notes](const Cancelled &cancelled) {
+        return doSynchronise(localPath, author, notes, cancelled);
     });
 }
 
@@ -727,7 +718,7 @@ KisVersioningJob *LocalFolderDriver::resolve(const QString &, const QString &, R
 
 KisVersioningJob *LocalFolderDriver::fileHistory(const QString &localPath, const QString &path, int offset, int limit)
 {
-    return startJob([localPath, path, offset, limit](const Cancelled &, const Summary &) {
+    return startJob([localPath, path, offset, limit](const Cancelled &) {
         return doFileHistory(localPath, path, offset, limit);
     });
 }
@@ -735,7 +726,7 @@ KisVersioningJob *LocalFolderDriver::fileHistory(const QString &localPath, const
 KisVersioningJob *LocalFolderDriver::fetchFileAtVersion(const QString &localPath, const QString &path,
                                                         const QString &versionId, const QString &outputPath)
 {
-    return startJob([localPath, path, versionId, outputPath](const Cancelled &cancelled, const Summary &) {
+    return startJob([localPath, path, versionId, outputPath](const Cancelled &cancelled) {
         return doFetch(localPath, path, versionId, outputPath, cancelled);
     });
 }
