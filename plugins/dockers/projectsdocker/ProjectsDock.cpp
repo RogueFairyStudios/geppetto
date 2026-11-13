@@ -22,7 +22,10 @@
 #include <klocalizedstring.h>
 
 #include <KisDocument.h>
+#include <KisMainWindow.h>
 #include <KisPart.h>
+#include <KisView.h>
+#include <KisViewManager.h>
 #include <KoFileDialog.h>
 
 #include <KisVersioningDriver.h>
@@ -31,6 +34,7 @@
 
 #include "ProjectsDocumentHost.h"
 #include "ProjectsModel.h"
+#include "ProjectsPresence.h"
 #include "ProjectsSyncRunner.h"
 
 using namespace KisVersioning;
@@ -60,6 +64,7 @@ ProjectsDock::ProjectsDock()
     m_host = new ProjectsDocumentHost(this);
     m_model = new ProjectsModel(m_driver, &m_settings, this);
     m_runner = new ProjectsSyncRunner(m_driver, m_host, this);
+    m_presence = new ProjectsPresence(m_driver, &m_settings, this);
     m_refreshTimer = new QTimer(this);
     m_refreshTimer->setSingleShot(true);
     m_refreshTimer->setInterval(500);
@@ -83,6 +88,21 @@ ProjectsDock::ProjectsDock()
         updateSaveWarning();
     });
     connect(part, &KisPart::sigDocumentRemoved, this, &ProjectsDock::updateSaveWarning);
+    connect(part, &KisPart::sigDocumentRemoved, this, [this](const QString &path) {
+        m_presence->documentClosed(path, m_unsavedDocuments.remove(ProjectsDocumentHost::pathKey(path)));
+    });
+    // Opening a file that someone else is editing: say so. Nobody is prevented from editing.
+    connect(part, &KisPart::sigViewAdded, this, [this](KisView *view) {
+        if (view && view->document()) {
+            m_presence->documentActivated(view->document()->path());
+        }
+    });
+    connect(m_presence, &ProjectsPresence::someoneElseIsEditing, this, [](const QString &, const QString &user) {
+        KisMainWindow *window = KisPart::instance()->currentMainwindow();
+        if (window && window->viewManager()) {
+            window->viewManager()->showFloatingMessage(i18n("%1 is editing this file", user), QIcon());
+        }
+    });
     connect(part, &KisPart::sigDocumentSaved, this, &ProjectsDock::onDocumentSaved);
     const QList<QPointer<KisDocument>> documents = part->documents();
     for (const QPointer<KisDocument> &document : documents) {
@@ -99,6 +119,7 @@ ProjectsDock::ProjectsDock()
 ProjectsDock::~ProjectsDock()
 {
     // What holds the settings, the driver or the host goes first, while all three still exist.
+    delete m_presence;
     delete m_runner;
     delete m_model;
     delete m_host;
@@ -257,6 +278,9 @@ void ProjectsDock::onProjectSynchronised(int project)
 {
     const ProjectsSyncRunner::Result result = m_runner->results().at(project);
     const KisVersioningSyncSession::Report &report = result.report;
+    if (report.error == KisVersioningJob::NoError) {
+        m_presence->projectSynchronised(result.projectPath);
+    }
     for (const QString &path : report.keptBoth) {
         m_syncMessages << i18n("Both versions of %1 were kept", QFileInfo(path).fileName());
     }
@@ -351,6 +375,15 @@ void ProjectsDock::updateSaveWarning()
 void ProjectsDock::watchDocument(KisDocument *document)
 {
     connect(document, &KisDocument::modified, this, &ProjectsDock::updateSaveWarning, Qt::UniqueConnection);
+    connect(document, &KisDocument::modified, this, [this, document](bool modified) {
+        const QString key = ProjectsDocumentHost::pathKey(document->path());
+        if (modified) {
+            m_unsavedDocuments.insert(key);
+            m_presence->documentModified(document->path());
+        } else {
+            m_unsavedDocuments.remove(key);
+        }
+    });
 }
 
 void ProjectsDock::onDocumentSaved(const QString &path)

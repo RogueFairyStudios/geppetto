@@ -209,3 +209,8 @@ msgid ""
 msgstr ""
 "%1 tem trabalho que ainda não foi enviado. Sincronize antes de tirar a pasta "
 "da sua escolha."
+
+#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+#, kde-format
+msgid "%1 is editing this file"
+msgstr "%1 está editando este arquivo"

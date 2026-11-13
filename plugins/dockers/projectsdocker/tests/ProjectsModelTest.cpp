@@ -978,6 +978,8 @@ void ProjectsModelTest::testTitleIsTranslated()
     // Strings written as the panel writes them: with characters beyond ASCII, or in two pieces.
     QCOMPARE(i18n("%1 · signed in", QStringLiteral("Ana")), QString::fromUtf8("Ana · sessão ativa"));
     QCOMPARE(i18n("Add folder…"), QString::fromUtf8("Adicionar pasta…"));
+    QCOMPARE(i18n("%1 is editing this file", QStringLiteral("Bruno")),
+             QString::fromUtf8("Bruno está editando este arquivo"));
     QCOMPARE(i18n("%1 was replaced by the other version while you kept working. "
                   "Save your work under another name.",
                   QStringLiteral("botao.kra")),

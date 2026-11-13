@@ -14,6 +14,7 @@ class KisDocument;
 class KisVersioningDriver;
 class ProjectsDocumentHost;
 class ProjectsModel;
+class ProjectsPresence;
 class ProjectsSyncRunner;
 class QLabel;
 class QLineEdit;
@@ -60,6 +61,10 @@ private:
     ProjectsDocumentHost *m_host {nullptr};
     ProjectsModel *m_model {nullptr};
     ProjectsSyncRunner *m_runner {nullptr};
+    ProjectsPresence *m_presence {nullptr};
+    /// Documents with unsaved changes, by the form in which paths are compared: the application
+    /// no longer says so when it announces that a document was removed.
+    QSet<QString> m_unsavedDocuments;
     QTimer *m_refreshTimer {nullptr};
     bool m_signedIn {false};
     QStringList m_syncMessages;

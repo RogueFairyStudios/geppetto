@@ -9,6 +9,7 @@ set(kritaprojectsdocker_SOURCES
     ProjectsModel.cpp
     ProjectsDocumentHost.cpp
     ProjectsSyncRunner.cpp
+    ProjectsPresence.cpp
 )
 
 kis_add_library(kritaprojectsdocker MODULE ${kritaprojectsdocker_SOURCES})
