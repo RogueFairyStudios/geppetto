@@ -42,6 +42,9 @@ public:
     bool isOpenAndModified(const QString &absolutePath) const;
     /// Brings forward a view of the open document of that file; false when the file is not open.
     bool showDocument(const QString &absolutePath) const;
+    /// The open documents of that file that reloadDocument() may replace: none when any of them
+    /// has unsaved changes or is being saved, and none when the file is not open.
+    QList<KisDocument *> documentsToReload(const QString &absolutePath) const;
 
     /// The form in which two paths are compared.
     static QString pathKey(const QString &path);

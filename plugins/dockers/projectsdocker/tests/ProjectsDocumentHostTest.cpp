@@ -265,6 +265,27 @@ void ProjectsDocumentHostTest::testSaveIntoMissingFolderFails()
     QVERIFY(!document->isSaving());
 }
 
+void ProjectsDocumentHostTest::testReloadDecision()
+{
+    QTemporaryDir dir;
+    const QString modifiedPath = dir.filePath(QStringLiteral("game/modified.kra"));
+    const QString cleanPath = dir.filePath(QStringLiteral("game/clean.kra"));
+    const QString sharedPath = dir.filePath(QStringLiteral("game/shared.kra"));
+    openDocument(modifiedPath, true);
+    KisDocument *clean = openDocument(QDir::toNativeSeparators(cleanPath), false);
+    // The same file open twice, one copy with unsaved changes: neither copy may be replaced.
+    openDocument(sharedPath, false);
+    openDocument(sharedPath, true);
+
+    ProjectsDocumentHost host;
+    QVERIFY(host.documentsToReload(modifiedPath).isEmpty());
+    const QList<KisDocument *> toReload = host.documentsToReload(cleanPath);
+    QCOMPARE(toReload.size(), 1);
+    QCOMPARE(toReload.first(), clean);
+    QVERIFY(host.documentsToReload(sharedPath).isEmpty());
+    QVERIFY(host.documentsToReload(dir.filePath(QStringLiteral("game/not-open.kra"))).isEmpty());
+}
+
 void ProjectsDocumentHostTest::testReloadLeavesModifiedDocumentAlone()
 {
     QTemporaryDir dir;

@@ -167,16 +167,23 @@ void ProjectsDocumentHost::reloadDocument(const QString &absolutePath)
     QMetaObject::invokeMethod(this, [this, absolutePath]() { reloadNow(absolutePath); }, Qt::QueuedConnection);
 }
 
+QList<KisDocument *> ProjectsDocumentHost::documentsToReload(const QString &absolutePath) const
+{
+    const QList<KisDocument *> open = documentsAt(absolutePath);
+    for (KisDocument *document : open) {
+        // Reloading would throw away unsaved work, or a save under way.
+        if (document->isModified() || document->isSaving()) {
+            return {};
+        }
+    }
+    return open;
+}
+
 void ProjectsDocumentHost::reloadNow(const QString &absolutePath)
 {
     // Asked again now: the artist may have changed the document since the session looked.
-    const QList<KisDocument *> open = documentsAt(absolutePath);
-    for (KisDocument *document : open) {
-        if (document->isModified() || document->isSaving()) {
-            return;
-        }
-    }
-    for (KisDocument *document : open) {
+    const QList<KisDocument *> documents = documentsToReload(absolutePath);
+    for (KisDocument *document : documents) {
         reload(document);
     }
 }
