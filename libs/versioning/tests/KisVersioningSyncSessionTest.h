@@ -34,6 +34,11 @@ private Q_SLOTS:
     void testNotSignedInIsReported();
     void testResolveFailureEndsWithError();
     void testSaveFailureStopsBeforeDriver();
+    void testSavesCompleteBeforeDriverIsCalled();
+    void testSynchronousSaveCompletionIsAccepted();
+    void testSecondSaveNotStartedAfterFailure();
+    void testDestroyedWhileSavingIsSafe();
+    void testDoneCalledTwiceIsIgnored();
     void testFinishedIsEmittedOnce();
 };
 

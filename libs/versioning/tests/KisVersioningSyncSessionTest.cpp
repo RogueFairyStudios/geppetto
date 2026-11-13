@@ -7,6 +7,9 @@
 #include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QTimer>
+
+#include <functional>
 
 #include <klocalizedstring.h>
 
@@ -26,19 +29,38 @@ public:
     QStringList openAndUnmodified;  ///< open documents without changes; a saved document joins them
     QStringList modifiedAgain;      ///< open documents the artist changed again after the save
     bool saveSucceeds = true;
+    enum SaveMode { ViaEventLoop, Synchronous, Hold };
+    SaveMode saveMode = ViaEventLoop;
+    int saveCalls = 0;
+    QList<std::function<void()>> held;  ///< completions waiting for the test, in the order of the saves
     QStringList reloaded;
     QStringList *sharedLog = nullptr;
 
     QStringList modifiedOpenDocuments(const QString &) const override { return modified; }
-    bool saveDocument(const QString &absolutePath) override
+    void saveDocument(const QString &absolutePath, std::function<void(bool)> done) override
     {
         if (sharedLog) {
             sharedLog->append(QStringLiteral("host:saveDocument ") + absolutePath);
         }
-        if (saveSucceeds && !openAndUnmodified.contains(absolutePath)) {
-            openAndUnmodified << absolutePath;
+        ++saveCalls;
+        auto complete = [this, absolutePath, done](bool ok) {
+            if (ok && !openAndUnmodified.contains(absolutePath)) {
+                openAndUnmodified << absolutePath;
+            }
+            done(ok);
+        };
+        const bool ok = saveSucceeds;
+        switch (saveMode) {
+        case Synchronous:
+            complete(ok);
+            break;
+        case Hold:
+            held.append([complete, ok]() { complete(ok); });
+            break;
+        case ViaEventLoop:
+            QTimer::singleShot(0, [complete, ok]() { complete(ok); });
+            break;
         }
-        return saveSucceeds;
     }
     bool isOpenAndUnmodified(const QString &absolutePath) const override
     {
@@ -555,6 +577,100 @@ void KisVersioningSyncSessionTest::testSaveFailureStopsBeforeDriver()
     QCOMPARE(report.error, KisVersioningJob::Failed);
     QVERIFY(!report.errorText.isEmpty());
     QVERIFY(f.driver.calls().isEmpty());
+}
+
+void KisVersioningSyncSessionTest::testSavesCompleteBeforeDriverIsCalled()
+{
+    Fixture f;
+    f.host.modified = QStringList{f.path("a.kra"), f.path("b.kra")};
+    f.host.saveMode = FakeHost::Hold;
+    KisVersioningSyncSession session(&f.driver, &f.host);
+    QSignalSpy spy(&session, &KisVersioningSyncSession::finished);
+    session.start(f.dir.path(), "notes");
+
+    QTest::qWait(50);
+    QCOMPARE(f.host.saveCalls, 1);
+    QCOMPARE(f.driver.calls().size(), 0);
+
+    f.host.held.takeFirst()();
+    QCOMPARE(f.host.saveCalls, 2);
+    QCOMPARE(f.driver.calls().size(), 0);
+
+    f.host.held.takeFirst()();
+    QCOMPARE(f.driver.callCount("synchronise"), 1);
+    QCOMPARE(f.log.size(), 3);
+    QVERIFY(f.log.at(0).startsWith("host:saveDocument ") && f.log.at(0).endsWith("a.kra"));
+    QVERIFY(f.log.at(1).startsWith("host:saveDocument ") && f.log.at(1).endsWith("b.kra"));
+    QVERIFY(f.log.at(2).startsWith("driver:synchronise "));
+    QVERIFY(spy.wait(5000));
+}
+
+void KisVersioningSyncSessionTest::testSynchronousSaveCompletionIsAccepted()
+{
+    Fixture f;
+    f.host.modified = QStringList{f.path("a.kra"), f.path("b.kra")};
+    f.host.saveMode = FakeHost::Synchronous;
+    SyncResult result;
+    result.sent = QStringList{"a.kra"};
+    f.driver.queueSyncResult(result);
+
+    const auto report = f.run();
+
+    QCOMPARE(report.error, KisVersioningJob::NoError);
+    QCOMPARE(report.sent, QStringList({"a.kra"}));
+    QCOMPARE(f.host.saveCalls, 2);
+    QCOMPARE(f.driver.callCount("synchronise"), 1);
+}
+
+void KisVersioningSyncSessionTest::testSecondSaveNotStartedAfterFailure()
+{
+    Fixture f;
+    f.host.modified = QStringList{f.path("a.kra"), f.path("b.kra")};
+    f.host.saveSucceeds = false;
+    f.host.saveMode = FakeHost::Synchronous;
+
+    const auto report = f.run();
+
+    QCOMPARE(report.error, KisVersioningJob::Failed);
+    QCOMPARE(f.host.saveCalls, 1);
+    QVERIFY(f.driver.calls().isEmpty());
+}
+
+void KisVersioningSyncSessionTest::testDestroyedWhileSavingIsSafe()
+{
+    Fixture f;
+    f.host.modified = QStringList{f.path("a.kra"), f.path("b.kra")};
+    f.host.saveMode = FakeHost::Hold;
+    auto *session = new KisVersioningSyncSession(&f.driver, &f.host);
+    session->start(f.dir.path(), "notes");
+    QCOMPARE(f.host.held.size(), 1);
+
+    delete session;
+    f.host.held.takeFirst()();
+    QTest::qWait(50);
+
+    QCOMPARE(f.host.saveCalls, 1);
+    QVERIFY(f.driver.calls().isEmpty());
+}
+
+void KisVersioningSyncSessionTest::testDoneCalledTwiceIsIgnored()
+{
+    Fixture f;
+    f.host.modified = QStringList{f.path("a.kra")};
+    f.host.saveMode = FakeHost::Hold;
+    KisVersioningSyncSession session(&f.driver, &f.host);
+    QSignalSpy spy(&session, &KisVersioningSyncSession::finished);
+    session.start(f.dir.path(), "notes");
+    QCOMPARE(f.host.held.size(), 1);
+
+    const auto completion = f.host.held.takeFirst();
+    completion();
+    completion();
+
+    QVERIFY(spy.wait(5000));
+    QTest::qWait(50);
+    QCOMPARE(f.driver.callCount("synchronise"), 1);
+    QCOMPARE(spy.count(), 1);
 }
 
 void KisVersioningSyncSessionTest::testFinishedIsEmittedOnce()

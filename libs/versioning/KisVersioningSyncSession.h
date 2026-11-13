@@ -4,6 +4,9 @@
 #ifndef KISVERSIONINGSYNCSESSION_H
 #define KISVERSIONINGSYNCSESSION_H
 
+#include <functional>
+#include <memory>
+
 #include <QDateTime>
 #include <QList>
 #include <QObject>
@@ -25,7 +28,10 @@ public:
     virtual ~KisVersioningDocumentHost();
     /// Open documents of the project that have unsaved changes. Absolute paths.
     virtual QStringList modifiedOpenDocuments(const QString &projectPath) const = 0;
-    virtual bool saveDocument(const QString &absolutePath) = 0;
+    /// Starts saving the document. Calls @p done(ok) exactly once when the file is on disk
+    /// (ok == true) or the save failed or was cancelled (ok == false). It may be called before
+    /// this function returns, or later from the event loop.
+    virtual void saveDocument(const QString &absolutePath, std::function<void(bool)> done) = 0;
     virtual bool isOpenAndUnmodified(const QString &absolutePath) const = 0;
     virtual void reloadDocument(const QString &absolutePath) = 0;
 };
@@ -72,6 +78,8 @@ Q_SIGNALS:
     void finished(const KisVersioningSyncSession::Report &report);
 
 private:
+    struct SaveState;
+    void saveNext();
     void synchroniseOnce();
     void onSynchronised(KisVersioningJob *job);
     void resolveNext();
@@ -99,6 +107,10 @@ private:
     QString m_resolvingPath;
     bool m_resolvingTheirs {false};
     QStringList m_reloaded;
+    QStringList m_documentsToSave;
+    QString m_savingDocument;
+    std::shared_ptr<SaveState> m_save;
+    bool m_inSaveCall {false};
     QString m_keepBothPath;
     QString m_keepBothFolder;
     QString m_keepBothUser;

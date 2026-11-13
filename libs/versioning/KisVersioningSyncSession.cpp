@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QMetaObject>
+#include <QPointer>
 #include <QtConcurrent>
 
 #include <utility>
@@ -88,18 +89,63 @@ void KisVersioningSyncSession::start(const QString &projectPath, const QString &
     m_attempts = 0;
     m_report = Report();
     m_reloaded.clear();
+    m_documentsToSave.clear();
+    m_save.reset();
 
-    // What the artist is editing goes to disk first: the driver only sees files.
-    const QStringList modified = m_host->modifiedOpenDocuments(projectPath);
-    for (const QString &document : modified) {
-        if (!m_host->saveDocument(document)) {
+    // What the artist is editing goes to disk first: the driver only sees files. The saves run
+    // one after the other, each finishing before the next starts.
+    m_documentsToSave = m_host->modifiedOpenDocuments(projectPath);
+    saveNext();
+}
+
+struct KisVersioningSyncSession::SaveState {
+    bool done = false;
+    bool ok = false;
+};
+
+void KisVersioningSyncSession::saveNext()
+{
+    // A loop, not recursion: a host may report done() before saveDocument() returns.
+    for (;;) {
+        if (m_documentsToSave.isEmpty()) {
+            synchroniseOnce();
+            return;
+        }
+
+        m_savingDocument = m_documentsToSave.takeFirst();
+        auto state = std::make_shared<SaveState>();
+        m_save = state;
+        const QPointer<KisVersioningSyncSession> self(this);
+
+        m_inSaveCall = true;
+        m_host->saveDocument(m_savingDocument, [self, state](bool ok) {
+            if (state->done) {
+                return; // a second call for the same save
+            }
+            state->done = true;
+            state->ok = ok;
+            if (!self || self->m_save != state || self->m_inSaveCall) {
+                return; // destroyed, stale, or reported inside saveDocument(): the loop picks it up
+            }
+            if (ok) {
+                self->saveNext();
+            } else {
+                self->endWithError(KisVersioningJob::Failed,
+                                   i18n("Could not save %1 before synchronising.",
+                                        QDir::toNativeSeparators(self->m_savingDocument)));
+            }
+        });
+        m_inSaveCall = false;
+
+        if (!state->done) {
+            return; // the completion arrives later
+        }
+        if (!state->ok) {
             endWithError(KisVersioningJob::Failed,
-                         i18n("Could not save %1 before synchronising.", QDir::toNativeSeparators(document)));
+                         i18n("Could not save %1 before synchronising.", QDir::toNativeSeparators(m_savingDocument)));
             return;
         }
     }
-
-    synchroniseOnce();
 }
 
 void KisVersioningSyncSession::watch(KisVersioningJob *job)
