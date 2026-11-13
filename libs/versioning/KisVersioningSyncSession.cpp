@@ -7,7 +7,9 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QMetaObject>
+#include <QtConcurrent>
 
 #include <utility>
 
@@ -27,6 +29,37 @@ void appendUnique(QStringList &list, const QStringList &items)
             list << item;
         }
     }
+}
+
+struct CopyOutcome {
+    bool ok = false;
+    QString name;
+};
+
+// Runs on a worker thread and touches nothing but its arguments: the copy of a
+// large art file must not block the interface. QFile::copy never overwrites, it
+// fails when the destination exists; then the next name is tried.
+CopyOutcome copyWithoutOverwriting(const QString &source, const QString &directoryPath, const QString &fileName,
+                                   const QString &user, QStringList taken)
+{
+    const QDir directory(directoryPath);
+    for (int tries = 0; tries < 1000; ++tries) {
+        const QString name = conflictCopyName(fileName, user, taken);
+        const QString destination = directory.filePath(name);
+        if (QFile::copy(source, destination)) {
+            if (QFileInfo(destination).size() != QFileInfo(source).size()) {
+                QFile::remove(destination);
+                return {};
+            }
+            return {true, name};
+        }
+        if (!QFileInfo::exists(destination)) {
+            return {};
+        }
+        // Someone created that name since the folder was listed: take the next one.
+        taken << name;
+    }
+    return {};
 }
 
 } // namespace
@@ -93,6 +126,10 @@ void KisVersioningSyncSession::onSynchronised(KisVersioningJob *job)
     const SyncResult result = job->result<SyncResult>();
     appendUnique(m_report.sent, result.sent);
     appendUnique(m_report.received, result.received);
+    // A newer version of a file already reloaded must be shown again.
+    for (const QString &path : result.received) {
+        m_reloaded.removeAll(path);
+    }
     m_report.pendingUpload = result.pendingUpload;
     m_serverChanged = result.serverChanged;
     m_hadDivergence = !result.divergences.isEmpty();
@@ -111,19 +148,11 @@ void KisVersioningSyncSession::resolveNext()
 
     const Divergence divergence = m_divergences.at(m_nextDivergence++);
     switch (divergence.kind) {
-    case DivergenceKind::BothModified: {
-        // My content goes into a copy before the driver replaces the working file with theirs.
-        QString copyPath;
-        QString errorText;
-        if (!keepBoth(divergence.path, &copyPath, &errorText)) {
-            endWithError(KisVersioningJob::Failed, errorText);
-            return;
-        }
-        appendUnique(m_report.keptBoth, {divergence.path});
-        appendUnique(m_report.conflictCopies, {copyPath});
-        runResolve(divergence.path, Resolution::Theirs);
+    case DivergenceKind::BothModified:
+        // My content goes into a copy before the driver replaces the working file with theirs;
+        // the state machine goes on when the copy is done.
+        startKeepBoth(divergence.path);
         break;
-    }
     case DivergenceKind::DeletedHereModifiedThere:
         runResolve(divergence.path, Resolution::Theirs);
         break;
@@ -171,51 +200,61 @@ void KisVersioningSyncSession::afterResolutions()
     synchroniseOnce();
 }
 
-bool KisVersioningSyncSession::keepBoth(const QString &path, QString *copyPath, QString *errorText)
+void KisVersioningSyncSession::startKeepBoth(const QString &path)
 {
     const QDir root(m_projectPath);
     const int slash = path.lastIndexOf(QLatin1Char('/'));
     const QString folder = slash >= 0 ? path.left(slash + 1) : QString();
     const QString fileName = path.mid(slash + 1);
-    const QDir directory(root.filePath(folder));
-    const QString source = root.filePath(path);
-
-    const QString failure = i18n("Could not keep a copy of %1, so it was left as it is.", fileName);
+    const QString directoryPath = root.filePath(folder);
 
     // Everything in the folder counts as taken, folders and hidden files included.
-    QStringList taken = directory.entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+    const QStringList taken = QDir(directoryPath).entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
     const QString user = m_driver->currentUser();
+    const QString source = root.filePath(path);
 
-    for (int tries = 0; tries < 1000; ++tries) {
-        const QString name = conflictCopyName(fileName, user, taken);
-        const QString destination = directory.filePath(name);
-        // QFile::copy never overwrites: it fails when the destination exists.
-        if (QFile::copy(source, destination)) {
-            if (QFileInfo(destination).size() != QFileInfo(source).size()) {
-                QFile::remove(destination);
-                break;
-            }
+    m_keepBothPath = path;
+    m_keepBothFolder = folder;
+    m_keepBothUser = user;
 
-            KisVersioningConflictMarkers::Marker marker;
-            marker.copyPath = folder + name;
-            marker.originalPath = path;
-            marker.author = user;
-            marker.date = QDateTime::currentDateTime();
-            // Without a marker the copy still holds my content, so the work goes on.
-            KisVersioningConflictMarkers(m_projectPath).add(marker);
+    auto *watcher = new QFutureWatcher<CopyOutcome>(this);
+    connect(watcher, &QFutureWatcher<CopyOutcome>::finished, this, [this, watcher]() {
+        const CopyOutcome outcome = watcher->result();
+        watcher->deleteLater();
+        onCopyFinished(outcome.ok, outcome.name);
+    });
+    // The task works on copies of its arguments, so it is harmless if the session is destroyed
+    // first: the watcher goes with the session and nobody is told.
+    watcher->setFuture(QtConcurrent::run(copyWithoutOverwriting, source, directoryPath, fileName, user, taken));
+}
 
-            *copyPath = marker.copyPath;
-            return true;
-        }
-        if (!QFileInfo::exists(destination)) {
-            break;
-        }
-        // Someone created that name since we looked: take the next one.
-        taken << name;
+void KisVersioningSyncSession::onCopyFinished(bool ok, const QString &name)
+{
+    const QString path = m_keepBothPath;
+    const QString fileName = path.mid(path.lastIndexOf(QLatin1Char('/')) + 1);
+    if (!ok) {
+        endWithError(KisVersioningJob::Failed,
+                     i18n("Could not keep a copy of %1, so it was left as it is.", fileName));
+        return;
     }
 
-    *errorText = failure;
-    return false;
+    KisVersioningConflictMarkers::Marker marker;
+    marker.copyPath = m_keepBothFolder + name;
+    marker.originalPath = path;
+    marker.author = m_keepBothUser;
+    marker.date = QDateTime::currentDateTime();
+    if (!KisVersioningConflictMarkers(m_projectPath).add(marker)) {
+        // Without the marker nothing would show the artist that their work sits in the copy:
+        // take the copy back and leave the file as it is.
+        QFile::remove(QDir(m_projectPath).filePath(marker.copyPath));
+        endWithError(KisVersioningJob::Failed,
+                     i18n("Could not mark the copy of %1 as a conflict to resolve, so it was left as it is.", fileName));
+        return;
+    }
+
+    appendUnique(m_report.keptBoth, {path});
+    appendUnique(m_report.conflictCopies, {marker.copyPath});
+    runResolve(path, Resolution::Theirs);
 }
 
 void KisVersioningSyncSession::reloadIfClean(const QString &path)

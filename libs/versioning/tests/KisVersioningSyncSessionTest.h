@@ -22,6 +22,10 @@ private Q_SLOTS:
     void testConflictCopyNameAlreadyTaken();
     void testConflictCopyNeverOverwritesOtherCase();
     void testConflictCopyFailureLeavesFileUntouched();
+    void testNameTakenAfterListingGetsNextName();
+    void testMarkerFailureRemovesCopyAndStops();
+    void testNewerVersionIsReloadedAfterKeepBoth();
+    void testDestroyedDuringCopyIsSafe();
     void testDeleteVersusModifyKeepsTheChange();
     void testServerChangedRetriesUpToThreeTimes();
     void testOfflineIsPendingUpload();

@@ -4,6 +4,8 @@
 #ifndef KISVERSIONINGFAKEDRIVER_H
 #define KISVERSIONINGFAKEDRIVER_H
 
+#include <functional>
+
 #include <QByteArray>
 #include <QHash>
 #include <QList>
@@ -44,6 +46,9 @@ public:
     void setResolveError(KisVersioningJob::Error error, const QString &text = QString());
     /// The bytes resolve(path, Theirs) puts into the working file at @p path.
     void setTheirContent(const QString &path, const QByteArray &content);
+    /// Called every time currentUser() is asked; the session asks after it has listed a folder, so a
+    /// hook can create a file that the listing did not see.
+    void setCurrentUserHook(const std::function<void()> &hook);
     /// When set, every call also appends "driver:<name> <args>" to @p log, so a test can order driver and host calls.
     void setSharedLog(QStringList *log);
 
@@ -93,6 +98,7 @@ private:
     Outcome m_announce;
     Outcome m_resolve;
     QHash<QString, QByteArray> m_theirContent;
+    std::function<void()> m_userHook;
     QStringList *m_sharedLog {nullptr};
     QList<Call> m_calls;
 };

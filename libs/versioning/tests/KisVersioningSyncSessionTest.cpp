@@ -301,6 +301,92 @@ void KisVersioningSyncSessionTest::testConflictCopyFailureLeavesFileUntouched()
     QCOMPARE(f.driver.callCount("synchronise"), 1);
 }
 
+void KisVersioningSyncSessionTest::testNameTakenAfterListingGetsNextName()
+{
+    Fixture f;
+    f.driver.setCurrentUser("Bruno");
+    f.write("ui/botao.kra", "mine");
+    // The name appears after the session listed the folder: only the write-time guard can notice.
+    bool created = false;
+    f.driver.setCurrentUserHook([&]() {
+        if (!created) {
+            created = true;
+            f.write("ui/botao (Bruno).kra", "appeared meanwhile");
+        }
+    });
+    f.driver.queueSyncResult(resultWithDivergence("ui/botao.kra", DivergenceKind::BothModified));
+
+    const auto report = f.run();
+
+    QCOMPARE(report.error, KisVersioningJob::NoError);
+    QCOMPARE(report.conflictCopies, QStringList({"ui/botao (Bruno) 2.kra"}));
+    QCOMPARE(f.read("ui/botao (Bruno) 2.kra"), QByteArray("mine"));
+    QCOMPARE(f.read("ui/botao (Bruno).kra"), QByteArray("appeared meanwhile"));
+}
+
+void KisVersioningSyncSessionTest::testMarkerFailureRemovesCopyAndStops()
+{
+    Fixture f;
+    f.driver.setCurrentUser("Bruno");
+    f.write("ui/botao.kra", "mine");
+    f.driver.setTheirContent("ui/botao.kra", "theirs");
+    // A regular file where the markers folder should be: no marker can be written.
+    f.write(".geppetto/conflicts", "not a folder");
+    f.driver.queueSyncResult(resultWithDivergence("ui/botao.kra", DivergenceKind::BothModified));
+
+    const auto report = f.run();
+
+    QCOMPARE(report.error, KisVersioningJob::Failed);
+    QVERIFY(!report.errorText.isEmpty());
+    QCOMPARE(f.driver.callCount("resolve"), 0);
+    QCOMPARE(f.read("ui/botao.kra"), QByteArray("mine"));
+    QCOMPARE(QDir(f.path("ui")).entryList(QDir::Files), QStringList({"botao.kra"}));
+    QVERIFY(report.keptBoth.isEmpty());
+    QVERIFY(report.conflictCopies.isEmpty());
+}
+
+void KisVersioningSyncSessionTest::testNewerVersionIsReloadedAfterKeepBoth()
+{
+    Fixture f;
+    f.driver.setCurrentUser("Bruno");
+    f.write("ui/botao.kra", "mine");
+    f.driver.setTheirContent("ui/botao.kra", "theirs");
+    f.host.openAndUnmodified = QStringList{f.path("ui/botao.kra")};
+    f.driver.queueSyncResult(resultWithDivergence("ui/botao.kra", DivergenceKind::BothModified));
+    SyncResult second;
+    second.received = QStringList{"ui/botao.kra"};
+    f.driver.queueSyncResult(second);
+
+    const auto report = f.run();
+
+    QCOMPARE(report.error, KisVersioningJob::NoError);
+    QCOMPARE(f.host.reloaded.size(), 2);
+    // The second reload comes after the second synchronise.
+    int secondSync = -1, lastReload = -1, syncs = 0;
+    for (int i = 0; i < f.log.size(); ++i) {
+        if (f.log.at(i).startsWith("driver:synchronise ") && ++syncs == 2) secondSync = i;
+        if (f.log.at(i).startsWith("host:reloadDocument ")) lastReload = i;
+    }
+    QVERIFY(secondSync >= 0);
+    QVERIFY(lastReload > secondSync);
+}
+
+void KisVersioningSyncSessionTest::testDestroyedDuringCopyIsSafe()
+{
+    Fixture f;
+    f.driver.setCurrentUser("Bruno");
+    f.write("ui/botao.kra", QByteArray(1024 * 1024, 'x'));
+    f.driver.queueSyncResult(resultWithDivergence("ui/botao.kra", DivergenceKind::BothModified));
+
+    auto *session = new KisVersioningSyncSession(&f.driver, &f.host);
+    session->start(f.dir.path(), "notes");
+    QTest::qWait(30);  // the synchronise job finishes and the copy starts
+    delete session;
+    QTest::qWait(300); // the copy ends with nobody listening
+
+    QCOMPARE(f.driver.callCount("resolve"), 0);
+}
+
 void KisVersioningSyncSessionTest::testDeleteVersusModifyKeepsTheChange()
 {
     {

@@ -117,7 +117,15 @@ KisVersioningJob *KisVersioningFakeDriver::makeJob(const Outcome &outcome)
 
 QString KisVersioningFakeDriver::id() const { return QStringLiteral("fake"); }
 Capabilities KisVersioningFakeDriver::capabilities() const { return m_capabilities; }
-QString KisVersioningFakeDriver::currentUser() const { return m_user; }
+QString KisVersioningFakeDriver::currentUser() const
+{
+    if (m_userHook) {
+        m_userHook();
+    }
+    return m_user;
+}
+
+void KisVersioningFakeDriver::setCurrentUserHook(const std::function<void()> &hook) { m_userHook = hook; }
 
 KisVersioningJob *KisVersioningFakeDriver::signIn(const QString &serverAddress)
 {

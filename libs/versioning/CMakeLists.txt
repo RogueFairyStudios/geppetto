@@ -22,6 +22,7 @@ target_link_libraries(kritaversioning
         KF${KF_MAJOR}::I18n
         KF${KF_MAJOR}::ConfigCore
         Qt${QT_MAJOR_VERSION}::Core
+        Qt${QT_MAJOR_VERSION}::Concurrent
 )
 
 set_target_properties(kritaversioning PROPERTIES

@@ -77,7 +77,8 @@ private:
     void runResolve(const QString &path, KisVersioning::Resolution resolution);
     void onResolved(KisVersioningJob *job);
     void afterResolutions();
-    bool keepBoth(const QString &path, QString *copyPath, QString *errorText);
+    void startKeepBoth(const QString &path);
+    void onCopyFinished(bool ok, const QString &name);
     void endWithDriverError(KisVersioningJob *job);
     void endWithError(KisVersioningJob::Error error, const QString &text);
     void conclude();
@@ -97,6 +98,9 @@ private:
     QString m_resolvingPath;
     bool m_resolvingTheirs {false};
     QStringList m_reloaded;
+    QString m_keepBothPath;
+    QString m_keepBothFolder;
+    QString m_keepBothUser;
     Report m_report;
 };
 

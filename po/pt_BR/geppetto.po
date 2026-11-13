@@ -28,3 +28,8 @@ msgstr "Não foi possível salvar %1 antes de sincronizar."
 #, kde-format
 msgid "Could not keep a copy of %1, so it was left as it is."
 msgstr "Não foi possível guardar uma cópia de %1; o arquivo foi deixado como estava."
+
+#: libs/versioning/KisVersioningSyncSession.cpp
+#, kde-format
+msgid "Could not mark the copy of %1 as a conflict to resolve, so it was left as it is."
+msgstr "Não foi possível marcar a cópia de %1 como conflito a resolver; o arquivo foi deixado como estava."
