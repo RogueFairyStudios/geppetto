@@ -310,16 +310,27 @@ private Q_SLOTS:
         QCOMPARE(readFile(QDir(pair.pathB).filePath("base.kra")), QByteArray("base changed"));
     }
 
+    // Both people change one file. Each content kind must end the same way: a backend may treat
+    // text differently from binary content (merge it line by line), but the artist's file is never
+    // changed without being told.
+    void testDivergenceReportedAndMineIntact_data()
+    {
+        addDivergenceContents();
+    }
+
     void testDivergenceReportedAndMineIntact()
     {
         REQUIRE_FEATURE(KisVersioning::RemoteProjects);
+        QFETCH(QByteArray, base);
+        QFETCH(QByteArray, first);
+        QFETCH(QByteArray, second);
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
         Pair pair;
-        QVERIFY2(setUpPair(dir.path(), &pair, {{"a.kra", "base"}}), "could not set up two copies of the project");
+        QVERIFY2(setUpPair(dir.path(), &pair, {{"a.kra", base}}), "could not set up two copies of the project");
 
-        QVERIFY(writeFile(pair.pathA, "a.kra", "changed by the first"));
-        QVERIFY(writeFile(pair.pathB, "a.kra", "changed by the second"));
+        QVERIFY(writeFile(pair.pathA, "a.kra", first));
+        QVERIFY(writeFile(pair.pathB, "a.kra", second));
         VERIFY_OK(run(pair.a->synchronise(pair.pathA, "first")));
 
         const Outcome sync = run(pair.b->synchronise(pair.pathB, "second"));
@@ -328,31 +339,47 @@ private Q_SLOTS:
         QCOMPARE(result.divergences.size(), 1);
         QCOMPARE(result.divergences[0].path, QString("a.kra"));
         QVERIFY(result.divergences[0].kind == KisVersioning::DivergenceKind::BothModified);
-        QCOMPARE(readFile(QDir(pair.pathB).filePath("a.kra")), QByteArray("changed by the second"));
+        // Byte for byte what the second person saved.
+        QCOMPARE(readFile(QDir(pair.pathB).filePath("a.kra")), second);
+    }
+
+    void testResolveTheirsThenSyncIsAccepted_data()
+    {
+        addDivergenceContents();
     }
 
     void testResolveTheirsThenSyncIsAccepted()
     {
         REQUIRE_FEATURE(KisVersioning::RemoteProjects);
+        QFETCH(QByteArray, base);
+        QFETCH(QByteArray, first);
+        QFETCH(QByteArray, second);
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
         Pair pair;
-        QVERIFY2(setUpPair(dir.path(), &pair, {{"a.kra", "base"}}), "could not set up two copies of the project");
+        QVERIFY2(setUpPair(dir.path(), &pair, {{"a.kra", base}}), "could not set up two copies of the project");
 
-        QVERIFY(writeFile(pair.pathA, "a.kra", "changed by the first"));
-        QVERIFY(writeFile(pair.pathB, "a.kra", "changed by the second"));
+        QVERIFY(writeFile(pair.pathA, "a.kra", first));
+        QVERIFY(writeFile(pair.pathB, "a.kra", second));
         VERIFY_OK(run(pair.a->synchronise(pair.pathA, "first")));
         const Outcome diverged = run(pair.b->synchronise(pair.pathB, "second"));
         VERIFY_OK(diverged);
         QCOMPARE(diverged.result.value<KisVersioning::SyncResult>().divergences.size(), 1);
+        QCOMPARE(readFile(QDir(pair.pathB).filePath("a.kra")), second);
 
+        // Byte for byte what the first person saved.
         VERIFY_OK(run(pair.b->resolve(pair.pathB, "a.kra", KisVersioning::Resolution::Theirs, QString())));
-        QCOMPARE(readFile(QDir(pair.pathB).filePath("a.kra")), QByteArray("changed by the first"));
+        QCOMPARE(readFile(QDir(pair.pathB).filePath("a.kra")), first);
 
         const Outcome accepted = run(pair.b->synchronise(pair.pathB, "after resolving"));
         VERIFY_OK(accepted);
         QVERIFY(accepted.result.value<KisVersioning::SyncResult>().divergences.isEmpty());
-        QCOMPARE(readFile(QDir(pair.pathB).filePath("a.kra")), QByteArray("changed by the first"));
+        QVERIFY(!accepted.result.value<KisVersioning::SyncResult>().pendingUpload);
+        QCOMPARE(readFile(QDir(pair.pathB).filePath("a.kra")), first);
+
+        // The first person still finds their own version at the path.
+        VERIFY_OK(run(pair.a->synchronise(pair.pathA, QString())));
+        QCOMPARE(readFile(QDir(pair.pathA).filePath("a.kra")), first);
     }
 
     void testDeleteVersusModifyIsReported()
@@ -540,6 +567,40 @@ protected:
         return outcome.done && outcome.error == KisVersioningJob::NoError
             ? outcome.result.value<QVector<KisVersioning::VersionInfo>>()
             : QVector<KisVersioning::VersionInfo>();
+    }
+
+    /// Bytes that no tool takes for text: a zip signature, as a real .kra starts, a marker and
+    /// filler with zero and high bytes.
+    static QByteArray binaryContent(const QByteArray &marker)
+    {
+        QByteArray bytes("PK\x03\x04\x14\x00\x00\x00", 8);
+        bytes += marker;
+        quint32 x = 2166136261u;
+        for (char c : marker) {
+            x = (x ^ quint8(c)) * 16777619u;
+        }
+        for (int i = 0; i < 4096; ++i) {
+            x = x * 1103515245u + 12345u;
+            bytes += char(x >> 16);
+        }
+        return bytes;
+    }
+
+    /// Rows "base", "first" and "second" for the divergence tests: binary content, text where both
+    /// change the same line, and text where each changes a different line.
+    static void addDivergenceContents()
+    {
+        QTest::addColumn<QByteArray>("base");
+        QTest::addColumn<QByteArray>("first");
+        QTest::addColumn<QByteArray>("second");
+        const QByteArray lines("line 1\nline 2\nline 3\nline 4\nline 5\nline 6\n");
+        QTest::newRow("binary") << binaryContent("base") << binaryContent("first") << binaryContent("second");
+        QTest::newRow("text, same line") << lines
+                                         << QByteArray("line 1 by the first\nline 2\nline 3\nline 4\nline 5\nline 6\n")
+                                         << QByteArray("line 1 by the second\nline 2\nline 3\nline 4\nline 5\nline 6\n");
+        QTest::newRow("text, different lines") << lines
+                                               << QByteArray("line 1 by the first\nline 2\nline 3\nline 4\nline 5\nline 6\n")
+                                               << QByteArray("line 1\nline 2\nline 3\nline 4\nline 5\nline 6 by the second\n");
     }
 
     bool driverHas(KisVersioning::Capability capability)

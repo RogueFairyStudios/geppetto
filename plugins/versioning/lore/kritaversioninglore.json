@@ -1,0 +1,9 @@
+{
+    "Id": "Krita Versioning Lore Driver",
+    "Type": "Service",
+    "X-KDE-Library": "kritaversioninglore",
+    "X-KDE-ServiceTypes": [
+        "Krita/VersioningDriver"
+    ],
+    "X-Krita-Version": "28"
+}

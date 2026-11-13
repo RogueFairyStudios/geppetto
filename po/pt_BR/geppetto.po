@@ -45,10 +45,12 @@ msgid "Folder on this computer"
 msgstr "Pasta neste computador"
 
 #: plugins/versioning/localfolder/LocalFolderDriver.cpp
+#: plugins/versioning/lore/LoreOperation.cpp
 msgid "The operation was cancelled."
 msgstr "A operação foi cancelada."
 
 #: plugins/versioning/localfolder/LocalFolderDriver.cpp
+#: plugins/versioning/lore/LoreOperation.cpp
 #, kde-format
 msgid "The folder %1 does not exist."
 msgstr "A pasta %1 não existe."
@@ -214,3 +216,156 @@ msgstr ""
 #, kde-format
 msgid "%1 is editing this file"
 msgstr "%1 está editando este arquivo"
+
+#: plugins/versioning/lore/LoreDriverPlugin.cpp
+msgid "Lore server"
+msgstr "Servidor Lore"
+
+#: plugins/versioning/lore/LoreOperation.cpp
+#, kde-format
+msgid "The folder %1 is not a downloaded project."
+msgstr "A pasta %1 não é um projeto baixado."
+
+#: plugins/versioning/lore/LoreOperation.cpp
+msgid "The server could not be reached. Check the connection and try again."
+msgstr "Não foi possível falar com o servidor. Verifique a conexão e tente de novo."
+
+#: plugins/versioning/lore/LoreOperation.cpp
+msgid "Sign in to the server to continue."
+msgstr "Entre no servidor para continuar."
+
+#: plugins/versioning/lore/LoreOperation.cpp
+msgid "Your account does not have access to this project."
+msgstr "A sua conta não tem acesso a este projeto."
+
+#: plugins/versioning/lore/LoreOperation.cpp
+msgid "The project was not found on the server."
+msgstr "O projeto não foi encontrado no servidor."
+
+#: plugins/versioning/lore/LoreOperation.cpp
+msgid "The server is busy. Try again in a moment."
+msgstr "O servidor está ocupado. Tente de novo em instantes."
+
+#: plugins/versioning/lore/LoreFolderListing.cpp
+#, kde-format
+msgid "Could not list the folders of %1."
+msgstr "Não foi possível listar as pastas de %1."
+
+#: plugins/versioning/lore/LoreDriver.cpp
+#, kde-format
+msgid "Could not sign in to %1."
+msgstr "Não foi possível entrar em %1."
+
+#: plugins/versioning/lore/LoreDriver.cpp
+msgid "Finish signing in in the browser."
+msgstr "Termine de entrar no navegador."
+
+#: plugins/versioning/lore/LoreDriver.cpp
+msgid "Could not sign out."
+msgstr "Não foi possível sair."
+
+#: plugins/versioning/lore/LoreDriver.cpp
+msgid "Could not list the projects on the server."
+msgstr "Não foi possível listar os projetos do servidor."
+
+#: plugins/versioning/lore/LoreDriver.cpp
+#, kde-format
+msgid "Could not download %1."
+msgstr "Não foi possível baixar %1."
+
+#: plugins/versioning/lore/LoreDriver.cpp
+#, kde-format
+msgid "Downloading %1"
+msgstr "Baixando %1"
+
+#: plugins/versioning/lore/LoreDriver.cpp
+msgid "Could not change the folders kept on this computer."
+msgstr "Não foi possível mudar as pastas guardadas neste computador."
+
+#: plugins/versioning/lore/LoreDriver.cpp
+msgid "Changing the folders kept on this computer"
+msgstr "Mudando as pastas guardadas neste computador"
+
+#: plugins/versioning/lore/LoreDriver.cpp
+msgid "Could not read the state of the project."
+msgstr "Não foi possível ler o estado do projeto."
+
+#: plugins/versioning/lore/LoreDriver.cpp
+#, kde-format
+msgid "Could not read the versions of %1."
+msgstr "Não foi possível ler as versões de %1."
+
+#: plugins/versioning/lore/LoreDriver.cpp
+#, kde-format
+msgid "Could not get %1 as it was in that version."
+msgstr "Não foi possível obter %1 como estava nessa versão."
+
+#: plugins/versioning/lore/LoreDriver.cpp
+#, kde-format
+msgid "Could not tell the others that you are editing %1."
+msgstr "Não foi possível avisar os outros que você está editando %1."
+
+#: plugins/versioning/lore/LoreDriver.cpp
+#, kde-format
+msgid "Could not tell the others that you stopped editing %1."
+msgstr "Não foi possível avisar os outros que você parou de editar %1."
+
+#: plugins/versioning/lore/LoreDriver.cpp
+#, kde-format
+msgid "Someone else is already editing %1."
+msgstr "Outra pessoa já está editando %1."
+
+#: plugins/versioning/lore/LoreDriver.cpp
+msgid "Could not find out who is editing."
+msgstr "Não foi possível saber quem está editando."
+
+#: plugins/versioning/lore/LoreSyncOperation.cpp
+msgid "Could not synchronize the project."
+msgstr "Não foi possível sincronizar o projeto."
+
+#: plugins/versioning/lore/LoreSyncOperation.cpp
+msgid ""
+"Could not keep your version of the files that both of you changed, so the "
+"new versions were not taken. Synchronize again."
+msgstr ""
+"Não foi possível manter a sua versão dos arquivos que vocês dois alteraram; "
+"por isso as novas versões não foram recebidas. Sincronize de novo."
+
+#: plugins/versioning/lore/LoreSyncOperation.cpp
+#, kde-format
+msgid ""
+"Could not keep your version of %1, so the new versions were not taken. "
+"Synchronize again."
+msgstr ""
+"Não foi possível manter a sua versão de %1; por isso as novas versões não "
+"foram recebidas. Sincronize de novo."
+
+#: plugins/versioning/lore/LoreSyncOperation.cpp
+msgid "Looking for changes"
+msgstr "Procurando alterações"
+
+#: plugins/versioning/lore/LoreSyncOperation.cpp
+msgid "Preparing your files"
+msgstr "Preparando os seus arquivos"
+
+#: plugins/versioning/lore/LoreSyncOperation.cpp
+msgid "Creating a version"
+msgstr "Criando uma versão"
+
+#: plugins/versioning/lore/LoreSyncOperation.cpp
+msgid "Sending your work"
+msgstr "Enviando o seu trabalho"
+
+#: plugins/versioning/lore/LoreSyncOperation.cpp
+msgid "Receiving the latest versions"
+msgstr "Recebendo as versões mais recentes"
+
+#: plugins/versioning/lore/LoreSyncOperation.cpp
+#, kde-format
+msgid "Could not settle the differences in %1."
+msgstr "Não foi possível resolver as diferenças em %1."
+
+#: plugins/versioning/lore/LoreSyncOperation.cpp
+#, kde-format
+msgid "Settling the differences in %1"
+msgstr "Resolvendo as diferenças em %1"

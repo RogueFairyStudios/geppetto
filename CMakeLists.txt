@@ -1399,6 +1399,14 @@ set_package_properties(LibMyPaint PROPERTIES
 macro_bool_to_01(LibMyPaint_FOUND HAVE_LIBMYPAINT)
 configure_file(config-mypaint.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/config-mypaint.h )
 
+find_package(Lore)
+set_package_properties(Lore PROPERTIES
+    DESCRIPTION "Lore version control client library"
+    URL "https://github.com/EpicGames/lore"
+    TYPE OPTIONAL
+    PURPOSE "Required by the Lore versioning driver")
+macro_bool_to_01(Lore_FOUND HAVE_LORE)
+
 ##
 ## Look for OpenGL
 ##
