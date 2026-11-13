@@ -142,8 +142,7 @@ bool loadIndex(const QString &root, QVector<Version> *versions)
             return false;
         }
         version.author = object.value(QLatin1String("author")).toString();
-        version.date = QDateTime::fromString(object.value(QLatin1String("date")).toString(), Qt::ISODateWithMs);
-        version.date.setTimeSpec(Qt::UTC);
+        version.date = QDateTime::fromString(object.value(QLatin1String("date")).toString(), Qt::ISODateWithMs).toUTC();
         version.notes = object.value(QLatin1String("notes")).toString();
         const QJsonArray files = object.value(QLatin1String("files")).toArray();
         for (const QJsonValue &fileValue : files) {

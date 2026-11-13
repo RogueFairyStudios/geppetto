@@ -64,7 +64,8 @@ void KisVersioningFileRulesTest::testMarkersRoundTrip()
     QVERIFY(markers.list().isEmpty());
 
     using Marker = KisVersioningConflictMarkers::Marker;
-    const QDateTime date = QDateTime(QDate(2026, 11, 13), QTime(10, 30, 15, 250), Qt::UTC);
+    // Built from text so that the same line builds without warnings on Qt 5 and Qt 6.
+    const QDateTime date = QDateTime::fromString(QStringLiteral("2026-11-13T10:30:15.250Z"), Qt::ISODateWithMs);
     const Marker first{QString::fromUtf8("ui/ícone novo (Ana Lúcia).kra"), QString::fromUtf8("ui/ícone novo.kra"),
                        QString::fromUtf8("Ana Lúcia"), date};
     const Marker second{"ui/botao (Bruno).kra", "ui/botao.kra", "Bruno", date.addDays(1)};

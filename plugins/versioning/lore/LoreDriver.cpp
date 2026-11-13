@@ -105,8 +105,8 @@ struct HistoryReader {
             } else if (key == QLatin1String("committed-by") && info.author.isEmpty()) {
                 info.author = event.fields.value(QStringLiteral("text")).toString();
             } else if (key == QLatin1String("timestamp")) {
-                info.date = QDateTime::fromMSecsSinceEpoch(qint64(event.fields.value(QStringLiteral("number")).toULongLong()),
-                                                           Qt::UTC);
+                info.date =
+                    QDateTime::fromMSecsSinceEpoch(qint64(event.fields.value(QStringLiteral("number")).toULongLong())).toUTC();
             } else if (key == QLatin1String("message")) {
                 info.notes = event.fields.value(QStringLiteral("text")).toString();
             } else if (key == QLatin1String("merged-by")) {

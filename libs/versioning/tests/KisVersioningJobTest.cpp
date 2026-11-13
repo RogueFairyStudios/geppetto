@@ -129,7 +129,7 @@ void KisVersioningJobTest::testTypesTravelInVariant()
     info.id = "abc";
     info.number = 3;
     info.author = "me";
-    info.date = QDateTime(QDate(2026, 1, 2), QTime(3, 4, 5), Qt::UTC);
+    info.date = QDateTime::fromString(QStringLiteral("2026-01-02T03:04:05Z"), Qt::ISODate);
     info.notes = "n";
     info.isMerge = true;
     QVector<VersionInfo> history{info};

@@ -66,7 +66,8 @@ LoreDriverTest::LoreDriverTest()
     // Lore keeps its per-user configuration and instance registry here, not in the user profile.
     qputenv("LORE_GLOBAL_PATH", QFile::encodeName(QDir::toNativeSeparators(m_loreData.path())));
     qputenv("LORE_USE_SERVICE", "0");
-    qputenv("LORE_SERVICE_SOCKET", "lore_service-geppetto-test-" + QByteArray::number(QCoreApplication::applicationPid()));
+    const QByteArray socket = QByteArray("lore_service-geppetto-test-") + QByteArray::number(QCoreApplication::applicationPid());
+    qputenv("LORE_SERVICE_SOCKET", socket);
 }
 
 QString LoreDriverTest::server() const

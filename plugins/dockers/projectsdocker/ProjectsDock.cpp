@@ -267,8 +267,8 @@ void ProjectsDock::synchronise()
 
 void ProjectsDock::onSyncProgress(int project, int projectCount, qint64 done, qint64 total, const QString &label)
 {
-    const int steps = 100;
-    const int fraction = total > 0 ? int(qBound<qint64>(0, done * steps / total, steps)) : 0;
+    const qint64 steps = 100;
+    const int fraction = total > 0 ? int(qBound(qint64(0), done * steps / total, steps)) : 0;
     m_progressBar->setRange(0, projectCount * steps);
     m_progressBar->setValue(project * steps + fraction);
     m_progressBar->setFormat(label.isEmpty() ? QStringLiteral("%p%") : label);
