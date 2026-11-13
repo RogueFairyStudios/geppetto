@@ -9,6 +9,7 @@ add_subdirectory( impex )
 add_subdirectory( metadata )
 add_subdirectory( paintops )
 add_subdirectory( tools )
+add_subdirectory( versioning )
 add_subdirectory( qt )
 
 if ((HAVE_PYQT5 OR HAVE_PYQT6) AND HAVE_SIP AND HAVE_PYTHONLIBS)

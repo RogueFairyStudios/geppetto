@@ -38,3 +38,55 @@ msgstr "Não foi possível marcar a cópia de %1 como conflito a resolver; o arq
 #, kde-format
 msgid "%1 changed while it was being copied, so it was left as it is. Synchronise again."
 msgstr "%1 mudou durante a cópia; o arquivo foi deixado como estava. Sincronize de novo."
+
+#: plugins/versioning/localfolder/LocalFolderDriverPlugin.cpp
+msgid "Folder on this computer"
+msgstr "Pasta neste computador"
+
+#: plugins/versioning/localfolder/LocalFolderDriver.cpp
+msgid "The operation was cancelled."
+msgstr "A operação foi cancelada."
+
+#: plugins/versioning/localfolder/LocalFolderDriver.cpp
+#, kde-format
+msgid "The folder %1 does not exist."
+msgstr "A pasta %1 não existe."
+
+#: plugins/versioning/localfolder/LocalFolderDriver.cpp
+#, kde-format
+msgid "The versions kept in %1 could not be read."
+msgstr "Não foi possível ler as versões guardadas em %1."
+
+#: plugins/versioning/localfolder/LocalFolderDriver.cpp
+#, kde-format
+msgid "The new version could not be saved in %1."
+msgstr "Não foi possível salvar a nova versão em %1."
+
+#: plugins/versioning/localfolder/LocalFolderDriver.cpp
+#, kde-format
+msgid "%1 could not be read."
+msgstr "Não foi possível ler %1."
+
+#: plugins/versioning/localfolder/LocalFolderDriver.cpp
+#, kde-format
+msgid "%1 could not be copied."
+msgstr "Não foi possível copiar %1."
+
+#: plugins/versioning/localfolder/LocalFolderDriver.cpp
+#, kde-format
+msgid "%1 could not be written."
+msgstr "Não foi possível gravar %1."
+
+#: plugins/versioning/localfolder/LocalFolderDriver.cpp
+#, kde-format
+msgid "There is no version %1."
+msgstr "Não existe a versão %1."
+
+#: plugins/versioning/localfolder/LocalFolderDriver.cpp
+#, kde-format
+msgid "%1 does not exist in that version."
+msgstr "%1 não existe nessa versão."
+
+#: plugins/versioning/localfolder/LocalFolderDriver.cpp
+msgid "Versions kept in a folder do not support this operation."
+msgstr "Versões guardadas em uma pasta não oferecem suporte a esta operação."

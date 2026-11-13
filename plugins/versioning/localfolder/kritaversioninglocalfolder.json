@@ -1,0 +1,9 @@
+{
+    "Id": "Krita Versioning Local Folder Driver",
+    "Type": "Service",
+    "X-KDE-Library": "kritaversioninglocalfolder",
+    "X-KDE-ServiceTypes": [
+        "Krita/VersioningDriver"
+    ],
+    "X-Krita-Version": "28"
+}
