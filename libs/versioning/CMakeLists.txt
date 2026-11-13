@@ -10,6 +10,7 @@ set(kritaversioning_LIB_SRCS
     KisVersioningFileRules.cpp
     KisVersioningConflictMarkers.cpp
     KisVersioningSyncSession.cpp
+    KisVersioningSettings.cpp
 )
 
 kis_add_library(kritaversioning SHARED ${kritaversioning_LIB_SRCS})

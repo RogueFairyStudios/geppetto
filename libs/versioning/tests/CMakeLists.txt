@@ -2,6 +2,7 @@
 kis_add_tests(
     KisVersioningJobTest.cpp
     KisVersioningFileRulesTest.cpp
+    KisVersioningSettingsTest.cpp
 
     LINK_LIBRARIES kritaversioning kritatestsdk
 )
