@@ -12,3 +12,9 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+#: libs/versioning/KisVersioningFileRules.cpp
+msgid "1 file changed"
+msgid_plural "%1 files changed"
+msgstr[0] "1 arquivo alterado"
+msgstr[1] "%1 arquivos alterados"

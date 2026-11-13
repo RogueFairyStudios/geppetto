@@ -7,6 +7,8 @@ set(kritaversioning_LIB_SRCS
     KisVersioningJob.cpp
     KisVersioningDriver.cpp
     KisVersioningDriverRegistry.cpp
+    KisVersioningFileRules.cpp
+    KisVersioningConflictMarkers.cpp
 )
 
 kis_add_library(kritaversioning SHARED ${kritaversioning_LIB_SRCS})
