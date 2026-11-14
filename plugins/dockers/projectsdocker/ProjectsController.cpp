@@ -202,7 +202,7 @@ bool ProjectsController::isSynchronising() const
 
 bool ProjectsController::canSynchronise() const
 {
-    // A folder choice under way works on a project too: the run waits for it to end.
+    // A folder choice under way works on a project too: no run starts until it is over.
     return !isSynchronising() && m_account != Account::SignedOut && m_account != Account::Checking
         && !m_model->isBusy();
 }
@@ -495,6 +495,7 @@ void ProjectsController::documentNotReloaded(const QString &absolutePath)
 void ProjectsController::connectToApplication()
 {
     KisPart *part = KisPart::instance();
+    // Each document is watched once: when it is added, or here if it was open already.
     auto watch = [this](KisDocument *document) {
         connect(document, &KisDocument::modified, this, [this, document](bool modified) {
             if (modified) {
@@ -502,7 +503,7 @@ void ProjectsController::connectToApplication()
             } else {
                 documentsChanged();
             }
-        }, Qt::UniqueConnection);
+        });
     };
     connect(part, &KisPart::sigDocumentAdded, this, [this, watch](KisDocument *document) {
         watch(document);
