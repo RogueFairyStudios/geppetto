@@ -576,6 +576,13 @@ private Q_SLOTS:
         QCOMPARE(editing[0].path, QString("a.kra"));
         QCOMPARE(editing[0].user, pair.a->currentUser());
 
+        // Asked about no file in particular: every file of the project.
+        const Outcome everything = run(pair.b->whoIsEditing(pair.pathB, QStringList()));
+        VERIFY_OK(everything);
+        const QVector<KisVersioning::EditingInfo> all = everything.result.value<QVector<KisVersioning::EditingInfo>>();
+        QCOMPARE(all.size(), 1);
+        QCOMPARE(all[0].path, QString("a.kra"));
+
         VERIFY_OK(run(pair.a->announceEditing(pair.pathA, "a.kra", false)));
         const Outcome gone = run(pair.b->whoIsEditing(pair.pathB, {"a.kra"}));
         VERIFY_OK(gone);

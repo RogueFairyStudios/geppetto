@@ -764,7 +764,9 @@ KisVersioningJob *LoreDriver::whoIsEditing(const QString &localPath, const QStri
                 const QString owner = event.fields.value(QStringLiteral("owner")).toString();
                 // A server that does not know who calls names every owner "<unknown>": never report
                 // a nameless editor.
-                if (wanted.contains(path) && !owner.isEmpty() && owner != QLatin1String(unknownOwner)) {
+                // No path asked for: every file of the project.
+                if ((wanted.isEmpty() || wanted.contains(path)) && !owner.isEmpty()
+                    && owner != QLatin1String(unknownOwner)) {
                     EditingInfo info;
                     info.path = path;
                     info.user = owner;

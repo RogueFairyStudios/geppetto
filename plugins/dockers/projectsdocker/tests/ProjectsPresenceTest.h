@@ -26,6 +26,10 @@ private Q_SLOTS:
     void testOwnNoticeIsNotReported();
     void testActivationFailureIsSilent();
     void testDestroyedWithJobsPending();
+    void testCloseKeepsNoticeWhileWorkWaits();
+    void testChangeAfterCloseKeepsNotice();
+    void testSyncWithdrawsNoticesLeftBefore();
+    void testWithdrawalWaitsForTheAnnouncement();
 };
 
 #endif // PROJECTSPRESENCETEST_H

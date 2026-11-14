@@ -150,9 +150,6 @@ private:
     QStringList m_messages;
     QStringList m_runMessages;
     QSet<QObject *> m_visiblePanels;
-    /// Documents with unsaved changes, by the form in which paths are compared: the application no
-    /// longer says so when it announces that a document was removed.
-    QSet<QString> m_unsavedDocuments;
 };
 
 #endif // PROJECTSCONTROLLER_H

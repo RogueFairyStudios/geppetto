@@ -407,14 +407,13 @@ void ProjectsController::updateChoices()
 
 void ProjectsController::documentModified(const QString &absolutePath)
 {
-    m_unsavedDocuments.insert(ProjectsDocumentHost::pathKey(absolutePath));
     m_presence->documentModified(absolutePath);
     Q_EMIT changed();
 }
 
 void ProjectsController::documentClosed(const QString &absolutePath)
 {
-    m_presence->documentClosed(absolutePath, m_unsavedDocuments.remove(ProjectsDocumentHost::pathKey(absolutePath)));
+    m_presence->documentClosed(absolutePath);
     Q_EMIT changed();
 }
 
@@ -425,7 +424,6 @@ void ProjectsController::documentActivated(const QString &absolutePath)
 
 void ProjectsController::documentSaved(const QString &absolutePath)
 {
-    m_unsavedDocuments.remove(ProjectsDocumentHost::pathKey(absolutePath));
     Q_EMIT changed();
     const QStringList projects = m_model->downloadedProjectPaths();
     for (const QString &project : projects) {
@@ -449,7 +447,6 @@ void ProjectsController::connectToApplication()
             if (modified) {
                 documentModified(document->path());
             } else {
-                m_unsavedDocuments.remove(ProjectsDocumentHost::pathKey(document->path()));
                 documentsChanged();
             }
         }, Qt::UniqueConnection);

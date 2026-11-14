@@ -32,6 +32,9 @@
  * folder that appears on the server later is not left out. Both calls end with
  * the folders they left out (QStringList), empty for the whole project.
  *
+ * whoIsEditing() with an empty list of paths asks about every file of the
+ * project.
+ *
  * The panels show the text a driver gives its jobs (the error text of fail()
  * and the label of reportProgress()) to the artist as it is. That text must be
  * translated, must not carry messages of the backend, and must not use

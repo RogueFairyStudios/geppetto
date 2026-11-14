@@ -97,7 +97,7 @@ void ProjectsPresenceTest::testFileOutsideProjectsIsIgnored()
     f.presence.documentModified(other.filePath(QStringLiteral("loose.kra")));
     f.presence.documentModified(f.project() + QStringLiteral("-copy/botao.kra"));
     f.presence.documentActivated(other.filePath(QStringLiteral("loose.kra")));
-    f.presence.documentClosed(other.filePath(QStringLiteral("loose.kra")), false);
+    f.presence.documentClosed(other.filePath(QStringLiteral("loose.kra")));
     f.presence.documentModified(QString());
     Fixture::settle();
 
@@ -143,14 +143,17 @@ void ProjectsPresenceTest::testCloseWithoutChangesWithdraws()
     Fixture f;
     f.presence.documentModified(f.file(QStringLiteral("ui/botao.kra")));
     Fixture::settle();
-    f.presence.documentClosed(f.file(QStringLiteral("ui/botao.kra")), false);
+    // Closed, and the state of the project shows nothing waiting for the file: the notice goes.
+    f.presence.documentClosed(f.file(QStringLiteral("ui/botao.kra")));
+    QTRY_COMPARE(f.announcements(),
+                 (QStringList{QStringLiteral("ui/botao.kra:true"), QStringLiteral("ui/botao.kra:false")}));
+    QCOMPARE(f.driver.callsNamed(QStringLiteral("status")).first().args, QStringList{f.project()});
+
+    // A file that was never announced is not withdrawn, and nothing is asked.
+    f.presence.documentClosed(f.file(QStringLiteral("ui/menu.kra")));
     Fixture::settle();
-
-    QCOMPARE(f.announcements(), (QStringList{QStringLiteral("ui/botao.kra:true"), QStringLiteral("ui/botao.kra:false")}));
-
-    // A file that was never announced is not withdrawn.
-    f.presence.documentClosed(f.file(QStringLiteral("ui/menu.kra")), false);
     QCOMPARE(f.driver.callCount(QStringLiteral("announceEditing")), 2);
+    QCOMPARE(f.driver.callCount(QStringLiteral("status")), 1);
 }
 
 void ProjectsPresenceTest::testCloseWithChangesKeepsNotice()
@@ -158,8 +161,14 @@ void ProjectsPresenceTest::testCloseWithChangesKeepsNotice()
     Fixture f;
     f.presence.documentModified(f.file(QStringLiteral("ui/botao.kra")));
     Fixture::settle();
-    f.presence.documentClosed(f.file(QStringLiteral("ui/botao.kra")), true);
+    // Saved and closed, not synchronised: the file holds work the server does not have.
+    ProjectStatus status;
+    status.files.append({QStringLiteral("ui/botao.kra"), FileState::Modified});
+    f.driver.setStatus(status);
+    f.presence.documentClosed(f.file(QStringLiteral("ui/botao.kra")));
+    QTRY_COMPARE(f.driver.callCount(QStringLiteral("status")), 1);
     Fixture::settle();
+    QTest::qWait(50);
 
     QCOMPARE(f.announcements(), (QStringList{QStringLiteral("ui/botao.kra:true")}));
     // The notice is still held, so a synchronisation withdraws it.
@@ -182,8 +191,8 @@ void ProjectsPresenceTest::testOfflineIsSkippedSilently()
     QCOMPARE(f.driver.callCount(QStringLiteral("announceEditing")), 2);
 
     // A notice that was never registered is not withdrawn at the close; a registered one is.
-    f.presence.documentClosed(f.file(QStringLiteral("ui/botao.kra")), false);
-    QCOMPARE(f.driver.callCount(QStringLiteral("announceEditing")), 3);
+    f.presence.documentClosed(f.file(QStringLiteral("ui/botao.kra")));
+    QTRY_COMPARE(f.driver.callCount(QStringLiteral("announceEditing")), 3);
 }
 
 void ProjectsPresenceTest::testRefusalIsSilentAndNextAnnouncementIsAttempted()
@@ -193,7 +202,7 @@ void ProjectsPresenceTest::testRefusalIsSilentAndNextAnnouncementIsAttempted()
     f.driver.setAnnounceOutcome(KisVersioningJob::Failed, QStringLiteral("Refused"));
     f.presence.documentModified(f.file(QStringLiteral("ui/botao.kra")));
     Fixture::settle();
-    f.presence.documentClosed(f.file(QStringLiteral("ui/botao.kra")), false);
+    f.presence.documentClosed(f.file(QStringLiteral("ui/botao.kra")));
     f.presence.projectSynchronised(f.project());
     f.presence.documentModified(f.file(QStringLiteral("ui/botao.kra")));
     Fixture::settle();
@@ -209,7 +218,7 @@ void ProjectsPresenceTest::testDriverWithoutPresenceDoesNothing()
     f.driver.setCapabilities(Capabilities());
     f.presence.documentModified(f.file(QStringLiteral("ui/botao.kra")));
     f.presence.documentActivated(f.file(QStringLiteral("ui/botao.kra")));
-    f.presence.documentClosed(f.file(QStringLiteral("ui/botao.kra")), false);
+    f.presence.documentClosed(f.file(QStringLiteral("ui/botao.kra")));
     f.presence.projectSynchronised(f.project());
     Fixture::settle();
 
@@ -270,6 +279,109 @@ void ProjectsPresenceTest::testDestroyedWithJobsPending()
     Fixture::settle();
     QTest::qWait(50);
     QCOMPARE(f.driver.callCount(QStringLiteral("announceEditing")), 1);
+}
+
+void ProjectsPresenceTest::testCloseKeepsNoticeWhileWorkWaits()
+{
+    Fixture f;
+    f.presence.documentModified(f.file(QStringLiteral("ui/botao.kra")));
+    Fixture::settle();
+    // Versions made here and not sent may hold the file: the notice stays.
+    ProjectStatus status;
+    status.pendingUpload = 1;
+    f.driver.setStatus(status);
+    f.presence.documentClosed(f.file(QStringLiteral("ui/botao.kra")));
+    QTRY_COMPARE(f.driver.callCount(QStringLiteral("status")), 1);
+    QTest::qWait(50);
+    QCOMPARE(f.announcements(), QStringList{QStringLiteral("ui/botao.kra:true")});
+
+    // So does a state that cannot be read.
+    f.driver.setStatusError(KisVersioningJob::Offline, QStringLiteral("No connection"));
+    f.presence.documentClosed(f.file(QStringLiteral("ui/botao.kra")));
+    QTRY_COMPARE(f.driver.callCount(QStringLiteral("status")), 2);
+    QTest::qWait(50);
+    QCOMPARE(f.announcements(), QStringList{QStringLiteral("ui/botao.kra:true")});
+}
+
+void ProjectsPresenceTest::testChangeAfterCloseKeepsNotice()
+{
+    Fixture f;
+    f.presence.documentModified(f.file(QStringLiteral("ui/botao.kra")));
+    Fixture::settle();
+    f.driver.setHeld(QStringLiteral("status"), true);
+    f.presence.documentClosed(f.file(QStringLiteral("ui/botao.kra")));
+    QTRY_COMPARE(f.driver.heldCount(QStringLiteral("status")), 1);
+
+    // Opened and changed again before the state arrived: the close decides nothing.
+    f.presence.documentModified(f.file(QStringLiteral("ui/botao.kra")));
+    f.driver.releaseHeld(QStringLiteral("status"));
+    Fixture::settle();
+    QTest::qWait(50);
+    QCOMPARE(f.announcements(), QStringList{QStringLiteral("ui/botao.kra:true")});
+}
+
+void ProjectsPresenceTest::testSyncWithdrawsNoticesLeftBefore()
+{
+    Fixture f;
+    // Left by an earlier run of the application, which quit before synchronising; and another
+    // person's notice, which is not this person's to withdraw.
+    f.driver.setEditing({EditingInfo{QStringLiteral("ui/antigo.kra"), QStringLiteral("Ana")},
+                         EditingInfo{QStringLiteral("art/heroi.kra"), QStringLiteral("Bruno")}});
+    f.presence.projectSynchronised(f.project());
+    QTRY_COMPARE(f.announcements(), QStringList{QStringLiteral("ui/antigo.kra:false")});
+    // Asked about every file of the project.
+    const KisVersioningFakeDriver::Call asked = f.driver.callsNamed(QStringLiteral("whoIsEditing")).first();
+    QCOMPARE(asked.args, (QStringList{f.project(), QString()}));
+
+    // A file announced again while the question was out keeps its new notice.
+    f.driver.setEditing({EditingInfo{QStringLiteral("ui/botao.kra"), QStringLiteral("Ana")}});
+    f.driver.setHeld(QStringLiteral("whoIsEditing"), true);
+    f.presence.projectSynchronised(f.project());
+    QTRY_COMPARE(f.driver.heldCount(QStringLiteral("whoIsEditing")), 1);
+    f.presence.documentModified(f.file(QStringLiteral("ui/botao.kra")));
+    f.driver.releaseHeld(QStringLiteral("whoIsEditing"));
+    Fixture::settle();
+    QTest::qWait(50);
+    QCOMPARE(f.announcements(), (QStringList{QStringLiteral("ui/antigo.kra:false"), QStringLiteral("ui/botao.kra:true")}));
+
+    // Without a name, nothing is told apart: nothing is asked.
+    Fixture g;
+    g.driver.setCurrentUser(QString());
+    g.presence.projectSynchronised(g.project());
+    Fixture::settle();
+    QCOMPARE(g.driver.callCount(QStringLiteral("whoIsEditing")), 0);
+}
+
+void ProjectsPresenceTest::testWithdrawalWaitsForTheAnnouncement()
+{
+    Fixture f;
+    f.driver.setHeld(QStringLiteral("announceEditing"), true);
+    f.presence.documentModified(f.file(QStringLiteral("ui/botao.kra")));
+    QCOMPARE(f.announcements(), QStringList{QStringLiteral("ui/botao.kra:true")});
+
+    // Synchronised while the announcement is still on its way: the withdrawal waits for it.
+    f.presence.projectSynchronised(f.project());
+    Fixture::settle();
+    QCOMPARE(f.announcements(), QStringList{QStringLiteral("ui/botao.kra:true")});
+    f.driver.setHeld(QStringLiteral("announceEditing"), false);
+    f.driver.releaseHeld(QStringLiteral("announceEditing"));
+    QTRY_COMPARE(f.announcements(), (QStringList{QStringLiteral("ui/botao.kra:true"), QStringLiteral("ui/botao.kra:false")}));
+    QTest::qWait(50);
+    QCOMPARE(f.driver.callCount(QStringLiteral("announceEditing")), 2);
+
+    // An announcement that was refused leaves nothing to withdraw.
+    Fixture g;
+    g.driver.setAnnounceOutcome(KisVersioningJob::Failed, QStringLiteral("Refused"));
+    g.driver.setHeld(QStringLiteral("announceEditing"), true);
+    g.presence.documentModified(g.file(QStringLiteral("ui/botao.kra")));
+    g.presence.documentClosed(g.file(QStringLiteral("ui/botao.kra")));
+    QTRY_COMPARE(g.driver.callCount(QStringLiteral("status")), 1);
+    Fixture::settle();
+    g.driver.setHeld(QStringLiteral("announceEditing"), false);
+    g.driver.releaseHeld(QStringLiteral("announceEditing"));
+    Fixture::settle();
+    QTest::qWait(50);
+    QCOMPARE(g.announcements(), QStringList{QStringLiteral("ui/botao.kra:true")});
 }
 
 SIMPLE_TEST_MAIN(ProjectsPresenceTest)
