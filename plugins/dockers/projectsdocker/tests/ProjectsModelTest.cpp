@@ -27,6 +27,7 @@
 #include <KisVersioningConflictMarkers.h>
 #include <KisVersioningSettings.h>
 #include <KisVersioningSyncSession.h>
+#include <KisVersioningTranslations.h>
 
 #include "KisVersioningFakeDriver.h"
 #include "ProjectsDocuments.h"
@@ -1179,6 +1180,36 @@ void ProjectsModelTest::testPluginRegistersThePanel()
     QCOMPARE(dock->objectName(), QStringLiteral("ProjectsDocker"));
     QCOMPARE(dock->windowTitle(), QStringLiteral("Projects"));
     qunsetenv("KRITA_PLUGIN_PATH");
+}
+
+void ProjectsModelTest::testInstalledCatalogueIsFound()
+{
+    // An installation as the package lays it out: the catalogue in bin/locale.
+    const QString catalogue = QStringLiteral(GEPPETTO_LOCALE_DIR "/pt_BR/LC_MESSAGES/geppetto.mo");
+    QVERIFY2(QFileInfo::exists(catalogue), qPrintable(catalogue));
+    QTemporaryDir installed;
+    QVERIFY(QDir().mkpath(installed.filePath(QStringLiteral("bin/locale/pt_BR/LC_MESSAGES"))));
+    QVERIFY(QDir().mkpath(installed.filePath(QStringLiteral("share/locale"))));
+    QVERIFY(QFile::copy(catalogue, installed.filePath(QStringLiteral("bin/locale/pt_BR/LC_MESSAGES/geppetto.mo"))));
+    const QString root = installed.path() + QLatin1Char('/');
+    QCOMPARE(KisVersioning::translationsFolders(root), QStringList{installed.filePath(QStringLiteral("bin/locale"))});
+
+    KisVersioning::registerTranslationsIn(root);
+    KLocalizedString::setLanguages({QStringLiteral("pt_BR")});
+    QCOMPARE(i18n("Projects"), QStringLiteral("Projetos"));
+
+    // The layout of a build: share/locale. Both, when both hold one; share/locale when neither does.
+    QTemporaryDir built;
+    QVERIFY(QDir().mkpath(built.filePath(QStringLiteral("share/locale/pt_BR/LC_MESSAGES"))));
+    QVERIFY(QFile::copy(catalogue, built.filePath(QStringLiteral("share/locale/pt_BR/LC_MESSAGES/geppetto.mo"))));
+    QCOMPARE(KisVersioning::translationsFolders(built.path() + QLatin1Char('/')),
+             QStringList{built.filePath(QStringLiteral("share/locale"))});
+    QVERIFY(QDir().mkpath(built.filePath(QStringLiteral("bin/locale/pt_BR/LC_MESSAGES"))));
+    QVERIFY(QFile::copy(catalogue, built.filePath(QStringLiteral("bin/locale/pt_BR/LC_MESSAGES/geppetto.mo"))));
+    QCOMPARE(KisVersioning::translationsFolders(built.path() + QLatin1Char('/')).size(), 2);
+    QTemporaryDir empty;
+    QCOMPARE(KisVersioning::translationsFolders(empty.path() + QLatin1Char('/')),
+             QStringList{empty.filePath(QStringLiteral("share/locale"))});
 }
 
 void ProjectsModelTest::testTitleIsTranslated()

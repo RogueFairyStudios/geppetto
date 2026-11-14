@@ -51,6 +51,7 @@ private Q_SLOTS:
     void testRunnerLeavesOutAProjectWithAnUnsavedForeignFile();
 
     void testPluginRegistersThePanel();
+    void testInstalledCatalogueIsFound();
     void testTitleIsTranslated();
 };
 

@@ -22,7 +22,7 @@ msgstr[1] "%1 arquivos alterados"
 
 #: libs/versioning/KisVersioningSyncSession.cpp
 #, kde-format
-msgid "Could not save %1 before synchronising."
+msgid "Could not save %1 before synchronizing."
 msgstr "Não foi possível salvar %1 antes de sincronizar."
 
 #: libs/versioning/KisVersioningSyncSession.cpp
@@ -37,7 +37,7 @@ msgstr "Não foi possível marcar a cópia de %1 como conflito a resolver; o arq
 
 #: libs/versioning/KisVersioningSyncSession.cpp
 #, kde-format
-msgid "%1 changed while it was being copied, so it was left as it is. Synchronise again."
+msgid "%1 changed while it was being copied, so it was left as it is. Synchronize again."
 msgstr "%1 mudou durante a cópia; o arquivo foi deixado como estava. Sincronize de novo."
 
 #: plugins/versioning/localfolder/LocalFolderDriverPlugin.cpp

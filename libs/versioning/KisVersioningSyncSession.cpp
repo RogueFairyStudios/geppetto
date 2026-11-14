@@ -131,7 +131,7 @@ void KisVersioningSyncSession::saveNext()
                 self->saveNext();
             } else {
                 self->endWithError(KisVersioningJob::Failed,
-                                   i18n("Could not save %1 before synchronising.",
+                                   i18n("Could not save %1 before synchronizing.",
                                         QDir::toNativeSeparators(self->m_savingDocument)));
             }
         });
@@ -142,7 +142,7 @@ void KisVersioningSyncSession::saveNext()
         }
         if (!state->ok) {
             endWithError(KisVersioningJob::Failed,
-                         i18n("Could not save %1 before synchronising.", QDir::toNativeSeparators(m_savingDocument)));
+                         i18n("Could not save %1 before synchronizing.", QDir::toNativeSeparators(m_savingDocument)));
             return;
         }
     }
@@ -312,7 +312,7 @@ void KisVersioningSyncSession::onCopyFinished(bool ok, const QString &name)
             // the file; replacing the file with the other version would lose the newer save.
             QFile::remove(QDir(m_projectPath).filePath(m_keepBothFolder + name));
             endWithError(KisVersioningJob::Failed,
-                         i18n("%1 changed while it was being copied, so it was left as it is. Synchronise again.", fileName));
+                         i18n("%1 changed while it was being copied, so it was left as it is. Synchronize again.", fileName));
             return;
         }
     }

@@ -395,9 +395,11 @@ Outcome doSynchronise(const QString &root, const QString &author, const QString 
     if (!isProjectFolder(root)) {
         return problem(Problem::FolderMissing, root);
     }
-    // Other processes (a second instance, or another computer on a shared or synced folder) may
-    // synchronise the same project: the lock is held from reading the index to saving it, so the
-    // number chosen below is never taken by anyone else.
+    // Another process may synchronise the same project: a second instance of the application, or
+    // another computer reaching the folder over a network share that honours file locks. The lock
+    // is held from reading the index to saving it, so that among those the number chosen below is
+    // never taken twice. It cannot protect a folder kept in step by a cloud-drive client, which
+    // copies files between computers after the fact and knows nothing of this lock.
     if (!QDir().mkpath(storePath(root))) {
         return problem(Problem::IndexUnwritable, root);
     }
