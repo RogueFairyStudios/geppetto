@@ -19,6 +19,7 @@ private Q_SLOTS:
     void testRunWaitsForTheListBeingRead();
     void testOneRunAtATime();
     void testMessagesAfterARun();
+    void testDocumentNotReloadedIsWarned();
     void testSignedOutStopsRunsAndChoices();
     void testWhoIsSignedInIsAskedAtStart();
     void testNobodySignedInStopsRunsAndChoices();

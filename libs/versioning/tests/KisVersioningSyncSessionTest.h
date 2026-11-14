@@ -34,6 +34,7 @@ private Q_SLOTS:
     void testOfflineIsPendingUpload();
     void testNotSignedInIsReported();
     void testResolveFailureEndsWithError();
+    void testResolveFailureAfterTheFileChangedKeepsTheCopy();
     void testSaveFailureStopsBeforeDriver();
     void testSavesCompleteBeforeDriverIsCalled();
     void testSynchronousSaveCompletionIsAccepted();

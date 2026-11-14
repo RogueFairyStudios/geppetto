@@ -93,6 +93,9 @@ private:
     void afterResolutions();
     void startKeepBoth(const QString &path);
     void onCopyFinished(bool ok, const QString &name);
+    /// After a failed resolve of a kept-both path: the copy and its marker go when the working
+    /// file still holds what was copied.
+    void undoKeepBoth();
     void endWithDriverError(KisVersioningJob *job);
     void endWithError(KisVersioningJob::Error error, const QString &text);
     void conclude();
@@ -123,6 +126,7 @@ private:
     qint64 m_keepBothSize {0};
     QDateTime m_keepBothModified;
     QDateTime m_keepBothMoment;   ///< when the copy of the file began (UTC)
+    QString m_keepBothCopy;       ///< the copy made, recorded as kept both once the resolve succeeded
     Report m_report;
 };
 

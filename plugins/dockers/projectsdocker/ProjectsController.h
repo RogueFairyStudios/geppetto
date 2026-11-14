@@ -112,6 +112,8 @@ public Q_SLOTS:
     void documentSaved(const QString &absolutePath);
     /// An open document's unsaved state changed, or a document was opened: the warning follows.
     void documentsChanged();
+    /// A document whose file took the other version could not be reloaded: the artist is warned.
+    void documentNotReloaded(const QString &absolutePath);
 
 Q_SIGNALS:
     /// Something the panel shows changed.

@@ -389,6 +389,29 @@ void ProjectsControllerTest::testMessagesAfterARun()
     QCOMPARE(controller.messages(), QStringList{QStringLiteral("the folder is gone")});
 }
 
+void ProjectsControllerTest::testDocumentNotReloadedIsWarned()
+{
+    Fixture f;
+    f.addGame();
+    ProjectsController &controller = f.make();
+    QVERIFY(f.startAndWait());
+    const QString warning = QStringLiteral("botao.kra was replaced by the other version while you kept working. "
+                                           "Save your work under another name.");
+
+    controller.documentNotReloaded(f.path(QStringLiteral("game/ui/botao.kra")));
+    QCOMPARE(controller.messages(), QStringList{warning});
+
+    // During a run, it comes with the run's outcome.
+    f.driver.setHeld(QStringLiteral("synchronise"), true);
+    QSignalSpy finished(&controller, &ProjectsController::runFinished);
+    controller.synchronise(QString());
+    QTRY_COMPARE(f.driver.heldCount(QStringLiteral("synchronise")), 1);
+    controller.documentNotReloaded(f.path(QStringLiteral("game/ui/botao.kra")));
+    f.driver.releaseHeld(QStringLiteral("synchronise"));
+    QVERIFY(finished.wait(5000));
+    QCOMPARE(controller.messages(), QStringList{warning});
+}
+
 void ProjectsControllerTest::testSignedOutStopsRunsAndChoices()
 {
     Fixture f;

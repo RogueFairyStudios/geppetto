@@ -78,6 +78,8 @@ ProjectsController *ProjectsController::instance()
     owned->documents = new ProjectsDocumentHost();
     owned->controller = new ProjectsController(owned->driver, owned->documents, owned->settings.get());
     s_instance = owned->controller;
+    connect(owned->documents, &ProjectsDocumentHost::documentNotReloaded, s_instance.data(),
+            &ProjectsController::documentNotReloaded);
     s_instance->connectToApplication();
     s_instance->start();
     return s_instance;
@@ -470,6 +472,24 @@ void ProjectsController::documentSaved(const QString &absolutePath)
 void ProjectsController::documentsChanged()
 {
     Q_EMIT changed();
+}
+
+void ProjectsController::documentNotReloaded(const QString &absolutePath)
+{
+    const QString warning = i18n("%1 was replaced by the other version while you kept working. "
+                                 "Save your work under another name.",
+                                 QFileInfo(absolutePath).fileName());
+    if (isSynchronising()) {
+        // Shown with the rest of the run's outcome.
+        if (!m_runMessages.contains(warning)) {
+            m_runMessages << warning;
+        }
+        return;
+    }
+    if (!m_messages.contains(warning)) {
+        m_messages << warning;
+        Q_EMIT changed();
+    }
 }
 
 void ProjectsController::connectToApplication()

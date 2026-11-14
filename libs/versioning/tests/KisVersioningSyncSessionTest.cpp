@@ -124,9 +124,12 @@ struct Fixture {
         return spy.first().first().value<KisVersioningSyncSession::Report>();
     }
 
+    /// No test expects a cancelled session: a missing or repeated finished() fails every assertion
+    /// on the error, NoError included.
     static KisVersioningSyncSession::Report failureReport()
     {
         KisVersioningSyncSession::Report report;
+        report.error = KisVersioningJob::Cancelled;
         report.errorText = QStringLiteral("finished was not emitted once");
         return report;
     }
@@ -611,8 +614,43 @@ void KisVersioningSyncSessionTest::testResolveFailureEndsWithError()
     QCOMPARE(report.error, KisVersioningJob::Failed);
     QCOMPARE(report.errorText, QString("server refused"));
     QCOMPARE(f.driver.callCount("synchronise"), 1);
-    // The copy made before the failed resolve stays: it holds my content.
+    // Nothing was kept both: the working file still holds my content, so the copy and its marker
+    // this run made go, and the next run does not make a second one.
+    QVERIFY(report.keptBoth.isEmpty());
+    QVERIFY(report.conflictCopies.isEmpty());
+    QCOMPARE(f.read("ui/botao.kra"), QByteArray("mine"));
+    QCOMPARE(QDir(f.path("ui")).entryList(QDir::Files), QStringList({"botao.kra"}));
+    QVERIFY(KisVersioningConflictMarkers(f.dir.path()).list().isEmpty());
+}
+
+void KisVersioningSyncSessionTest::testResolveFailureAfterTheFileChangedKeepsTheCopy()
+{
+    // The resolve fails, but the working file is no longer what was copied (the artist saved, or
+    // the driver got halfway): the copy may be the only place of my content, so it stays, flagged.
+    Fixture f;
+    f.driver.setCurrentUser("Bruno");
+    f.write("ui/botao.kra", "mine");
+    f.driver.setResolveError(KisVersioningJob::Failed, "server refused");
+    f.driver.setHeld("resolve", true);
+    f.driver.queueSyncResult(resultWithDivergence("ui/botao.kra", DivergenceKind::BothModified));
+
+    KisVersioningSyncSession session(&f.driver, &f.host);
+    QSignalSpy finished(&session, &KisVersioningSyncSession::finished);
+    session.start(f.dir.path(), "notes");
+    QTRY_COMPARE(f.driver.heldCount("resolve"), 1);
+    f.write("ui/botao.kra", "MINE, CHANGED");
+    QFile file(f.path("ui/botao.kra"));
+    QVERIFY(file.open(QIODevice::ReadWrite));
+    QVERIFY(file.setFileTime(QDateTime::currentDateTime().addSecs(10), QFileDevice::FileModificationTime));
+    file.close();
+    f.driver.releaseHeld("resolve");
+    QVERIFY(finished.wait(5000));
+    const auto report = finished.first().first().value<KisVersioningSyncSession::Report>();
+
+    QCOMPARE(report.error, KisVersioningJob::Failed);
+    QVERIFY(report.keptBoth.isEmpty());
     QCOMPARE(f.read("ui/botao (Bruno).kra"), QByteArray("mine"));
+    QCOMPARE(KisVersioningConflictMarkers(f.dir.path()).list().size(), 1);
 }
 
 void KisVersioningSyncSessionTest::testSaveFailureStopsBeforeDriver()

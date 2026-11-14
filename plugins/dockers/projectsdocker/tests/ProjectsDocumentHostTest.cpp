@@ -13,6 +13,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QPointer>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 
 #include <KoColor.h>
@@ -20,6 +21,7 @@
 #include <KisDocument.h>
 #include <KisPart.h>
 #include <kis_config.h>
+#include <kis_image.h>
 
 #include "ProjectsDocumentHost.h"
 
@@ -371,6 +373,7 @@ void ProjectsDocumentHostTest::testReloadLeavesModifiedDocumentAlone()
     const QList<QPointer<KisDocument>> before = KisPart::instance()->documents();
 
     ProjectsDocumentHost host;
+    QSignalSpy notReloaded(&host, &ProjectsDocumentHost::documentNotReloaded);
     host.reloadDocument(path);
     QTest::qWait(200);
 
@@ -378,6 +381,32 @@ void ProjectsDocumentHostTest::testReloadLeavesModifiedDocumentAlone()
     QVERIFY(KisPart::instance()->documents().contains(document));
     QVERIFY(document->isModified());
     QCOMPARE(document->path(), QDir::toNativeSeparators(path));
+    // Not reloaded: the window shows work the file no longer holds, and the panel must say so.
+    QCOMPARE(notReloaded.size(), 1);
+    QCOMPARE(notReloaded.first().first().toString(), path);
+}
+
+void ProjectsDocumentHostTest::testReloadWaitsForTheImageThenSaysSo()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("game/a.kra"));
+    writeFile(path, "content on disk");
+    KisDocument *document = openDocument(path, false, true);
+    const QList<QPointer<KisDocument>> before = KisPart::instance()->documents();
+
+    // A stroke is under way: swapping the views now would cut it short. The host waits, and when
+    // the image stays busy it gives up and says so, leaving the document as it is.
+    document->image()->barrierLock();
+    ProjectsDocumentHost host;
+    QSignalSpy notReloaded(&host, &ProjectsDocumentHost::documentNotReloaded);
+    host.reloadDocument(path);
+    QTest::qWait(500);
+    QCOMPARE(notReloaded.size(), 0);
+    QVERIFY(notReloaded.wait(15000));
+    document->image()->unlock();
+    QCOMPARE(notReloaded.first().first().toString(), path);
+    QVERIFY(KisPart::instance()->documents() == before);
+    QVERIFY(!document->isModified());
 }
 
 KISTEST_MAIN(ProjectsDocumentHostTest)

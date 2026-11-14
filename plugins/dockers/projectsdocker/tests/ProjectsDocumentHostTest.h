@@ -27,6 +27,7 @@ private Q_SLOTS:
     void testSaveWaitsForASaveUnderWay();
     void testReloadDecision();
     void testReloadLeavesModifiedDocumentAlone();
+    void testReloadWaitsForTheImageThenSaysSo();
 };
 
 #endif // PROJECTSDOCUMENTHOSTTEST_H

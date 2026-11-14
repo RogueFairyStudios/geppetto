@@ -221,8 +221,16 @@ void KisVersioningSyncSession::runResolve(const QString &path, Resolution resolu
 void KisVersioningSyncSession::onResolved(KisVersioningJob *job)
 {
     if (job->error() != KisVersioningJob::NoError) {
+        if (m_resolvingKeepBoth) {
+            undoKeepBoth();
+        }
         endWithDriverError(job);
         return;
+    }
+    if (m_resolvingKeepBoth) {
+        // Both versions are kept only now that the other one took the file's place.
+        appendUnique(m_report.keptBoth, {m_resolvingPath});
+        appendUnique(m_report.conflictCopies, {m_keepBothCopy});
     }
     if (m_resolvingTheirs) {
         const QString absolute = QDir(m_projectPath).filePath(m_resolvingPath);
@@ -328,9 +336,23 @@ void KisVersioningSyncSession::onCopyFinished(bool ok, const QString &name)
         return;
     }
 
-    appendUnique(m_report.keptBoth, {path});
-    appendUnique(m_report.conflictCopies, {marker.copyPath});
+    m_keepBothCopy = marker.copyPath;
     runResolve(path, Resolution::Theirs, true);
+}
+
+void KisVersioningSyncSession::undoKeepBoth()
+{
+    const QDir root(m_projectPath);
+    const QFileInfo now(root.filePath(m_keepBothPath));
+    if (!now.exists() || now.size() != m_keepBothSize || now.lastModified() != m_keepBothModified) {
+        // The file is not what was copied any more: the copy may hold the only trace of my
+        // version, so it stays, flagged as a conflict to resolve.
+        return;
+    }
+    // The working file still holds my content: the copy is a duplicate, and the next run would
+    // make another one.
+    KisVersioningConflictMarkers(m_projectPath).remove(m_keepBothCopy);
+    QFile::remove(root.filePath(m_keepBothCopy));
 }
 
 void KisVersioningSyncSession::reloadIfClean(const QString &path)

@@ -60,12 +60,17 @@ public:
     /// True when @p path is @p folder or lies inside it.
     static bool isInside(const QString &path, const QString &folder);
 
+Q_SIGNALS:
+    /// A reload asked for did not happen (the document changed, a save or a stroke was under way,
+    /// or the file could not be opened): the window shows a version the file no longer holds.
+    void documentNotReloaded(const QString &absolutePath);
+
 private:
     static QList<KisDocument *> documentsAt(const QString &absolutePath);
     void startSave(const QPointer<KisDocument> &document, std::function<void(bool)> done);
     void waitForSave(const QPointer<KisDocument> &document, std::function<void(bool)> done);
-    void reloadNow(const QString &absolutePath);
-    void reload(const QPointer<KisDocument> &document);
+    void reloadNow(const QString &absolutePath, int attempt);
+    bool reload(const QPointer<KisDocument> &document);
 
     /// When each file last finished saving (UTC), by the form in which paths are compared.
     QHash<QString, QDateTime> m_lastSaved;

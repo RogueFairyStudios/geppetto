@@ -17,6 +17,7 @@
 #include <KisMainWindow.h>
 #include <KisPart.h>
 #include <KisView.h>
+#include <kis_image.h>
 #include <kis_properties_configuration.h>
 
 #include <KisVersioningFileRules.h>
@@ -252,10 +253,23 @@ bool ProjectsDocumentHost::showDocument(const QString &absolutePath)
     return true;
 }
 
+namespace {
+
+/// How long a reload waits for a stroke under way to end: this many tries, this far apart.
+const int reloadTries = 50;
+const int reloadTryIntervalMs = 100;
+
+bool isIdle(KisDocument *document)
+{
+    return !document->image() || document->image()->isIdle();
+}
+
+} // namespace
+
 void ProjectsDocumentHost::reloadDocument(const QString &absolutePath)
 {
     // Not from inside the session's step: opening a file runs parts of the event loop.
-    QMetaObject::invokeMethod(this, [this, absolutePath]() { reloadNow(absolutePath); }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(this, [this, absolutePath]() { reloadNow(absolutePath, 0); }, Qt::QueuedConnection);
 }
 
 QList<KisDocument *> ProjectsDocumentHost::documentsToReload(const QString &absolutePath) const
@@ -270,16 +284,46 @@ QList<KisDocument *> ProjectsDocumentHost::documentsToReload(const QString &abso
     return open;
 }
 
-void ProjectsDocumentHost::reloadNow(const QString &absolutePath)
+void ProjectsDocumentHost::reloadNow(const QString &absolutePath, int attempt)
 {
     // Asked again now: the artist may have changed the document since the session looked.
-    const QList<KisDocument *> documents = documentsToReload(absolutePath);
-    for (KisDocument *document : documents) {
-        reload(document);
+    if (documentsAt(absolutePath).isEmpty()) {
+        return; // closed meanwhile: nothing shows the old version
+    }
+    const QList<KisDocument *> found = documentsToReload(absolutePath);
+    if (found.isEmpty()) {
+        Q_EMIT documentNotReloaded(absolutePath);
+        return;
+    }
+    // A stroke or a filter under way would be cut short: wait for the image to be idle.
+    const bool busy = std::any_of(found.begin(), found.end(), [](KisDocument *document) { return !isIdle(document); });
+    if (busy) {
+        if (attempt + 1 < reloadTries) {
+            QTimer::singleShot(reloadTryIntervalMs, this, [this, absolutePath, attempt]() {
+                reloadNow(absolutePath, attempt + 1);
+            });
+        } else {
+            Q_EMIT documentNotReloaded(absolutePath);
+        }
+        return;
+    }
+    // Reloading one document runs parts of the event loop, where another may go.
+    QList<QPointer<KisDocument>> documents;
+    for (KisDocument *document : found) {
+        documents << document;
+    }
+    bool reloaded = true;
+    for (const QPointer<KisDocument> &document : std::as_const(documents)) {
+        if (document) {
+            reloaded = reload(document) && reloaded;
+        }
+    }
+    if (!reloaded) {
+        Q_EMIT documentNotReloaded(absolutePath);
     }
 }
 
-void ProjectsDocumentHost::reload(const QPointer<KisDocument> &document)
+bool ProjectsDocumentHost::reload(const QPointer<KisDocument> &document)
 {
     KisPart *part = KisPart::instance();
     QList<QPointer<KisView>> views;
@@ -287,25 +331,28 @@ void ProjectsDocumentHost::reload(const QPointer<KisDocument> &document)
     for (const QPointer<KisView> &view : allViews) {
         if (view && view->document() == document) {
             if (view->mainWindow() && view->mainWindow()->hackIsSaving()) {
-                return; // a window that is saving cannot let a view go
+                return false; // a window that is saving cannot let a view go
             }
             views << view;
         }
     }
     if (views.isEmpty()) {
-        return; // nothing shows it
+        return true; // nothing shows it
     }
 
-    KisDocument *fresh = part->createDocument();
+    const QPointer<KisDocument> fresh = part->createDocument();
     if (!fresh->openPath(document->path(), KisDocument::DontAddToRecent)) {
-        delete fresh;
-        return;
+        delete fresh.data();
+        return false;
     }
     // Opening runs parts of the event loop: everything is checked again before the swap.
     views.removeAll(QPointer<KisView>());
-    if (!document || document->isModified() || document->isSaving() || views.isEmpty()) {
-        fresh->deleteLater();
-        return;
+    if (!fresh || !document || document->isModified() || document->isSaving() || !isIdle(document)
+        || views.isEmpty()) {
+        if (fresh) {
+            fresh->deleteLater();
+        }
+        return !document || views.isEmpty();
     }
 
     part->addDocument(fresh);
@@ -322,4 +369,5 @@ void ProjectsDocumentHost::reload(const QPointer<KisDocument> &document)
             replacement->restoreViewState(state);
         }
     }
+    return true;
 }
