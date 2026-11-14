@@ -442,6 +442,47 @@ private Q_SLOTS:
         QVERIFY(kinds.value("b.kra") == KisVersioning::DivergenceKind::DeletedHereModifiedThere);
     }
 
+    // One deleted, the other changed, both ways: the change wins and nothing is deleted. Settled as
+    // the synchronisation session settles them, then accepted by the server.
+    void testDeleteVersusModifyKeepsTheChange()
+    {
+        REQUIRE_FEATURE(KisVersioning::RemoteProjects);
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        Pair pair;
+        QVERIFY2(setUpPair(dir.path(), &pair, {{"a.kra", "base a"}, {"b.kra", "base b"}}),
+                 "could not set up two copies of the project");
+
+        QVERIFY(QFile::remove(QDir(pair.pathA).filePath("a.kra")));
+        QVERIFY(writeFile(pair.pathA, "b.kra", "b changed by the first"));
+        QVERIFY(writeFile(pair.pathB, "a.kra", "a changed by the second"));
+        QVERIFY(QFile::remove(QDir(pair.pathB).filePath("b.kra")));
+        VERIFY_OK(run(pair.a->synchronise(pair.pathA, "first")));
+        const Outcome diverged = run(pair.b->synchronise(pair.pathB, "second"));
+        VERIFY_OK(diverged);
+        QCOMPARE(diverged.result.value<KisVersioning::SyncResult>().divergences.size(), 2);
+
+        // Changed here, deleted there: mine stays. Deleted here, changed there: theirs comes.
+        VERIFY_OK(run(pair.b->resolve(pair.pathB, "a.kra", KisVersioning::Resolution::Mine, QString())));
+        VERIFY_OK(run(pair.b->resolve(pair.pathB, "b.kra", KisVersioning::Resolution::Theirs, QString())));
+        QCOMPARE(readFile(QDir(pair.pathB).filePath("a.kra")), QByteArray("a changed by the second"));
+        QCOMPARE(readFile(QDir(pair.pathB).filePath("b.kra")), QByteArray("b changed by the first"));
+
+        const Outcome accepted = run(pair.b->synchronise(pair.pathB, "settled"));
+        VERIFY_OK(accepted);
+        QVERIFY(accepted.result.value<KisVersioning::SyncResult>().divergences.isEmpty());
+        QVERIFY(!accepted.result.value<KisVersioning::SyncResult>().pendingUpload);
+        QCOMPARE(readFile(QDir(pair.pathB).filePath("a.kra")), QByteArray("a changed by the second"));
+        QCOMPARE(readFile(QDir(pair.pathB).filePath("b.kra")), QByteArray("b changed by the first"));
+
+        // The first person ends with both changes too: the file they deleted comes back changed.
+        const Outcome received = run(pair.a->synchronise(pair.pathA, QString()));
+        VERIFY_OK(received);
+        QVERIFY(received.result.value<KisVersioning::SyncResult>().divergences.isEmpty());
+        QCOMPARE(readFile(QDir(pair.pathA).filePath("a.kra")), QByteArray("a changed by the second"));
+        QCOMPARE(readFile(QDir(pair.pathA).filePath("b.kra")), QByteArray("b changed by the first"));
+    }
+
     void testOfflineSyncIsPendingThenSentOnce()
     {
         REQUIRE_FEATURE(KisVersioning::RemoteProjects);
