@@ -69,28 +69,47 @@ void ProjectsPresence::documentModified(const QString &absolutePath)
     entry.serial = m_nextSerial++;
     m_announced.insert(key, entry);
 
-    KisVersioningJob *job = m_driver->announceEditing(projectPath, relativePath, true);
-    // The job deletes itself; its result is read here. Safe if this object is destroyed first.
-    connect(job, &KisVersioningJob::finished, this, [this, key, entry](KisVersioningJob *finishedJob) {
-        const bool failed = finishedJob->error() != KisVersioningJob::NoError;
-        const auto it = m_announced.constFind(key);
-        const bool stillWanted = it != m_announced.constEnd() && it->serial == entry.serial;
-        if (failed) {
-            // Offline, or another person's notice is registered: nothing to show. The next change tries again.
-            if (stillWanted) {
-                m_announced.remove(key);
+    callDriver([this, key, entry]() {
+        KisVersioningJob *job = m_driver->announceEditing(entry.projectPath, entry.relativePath, true);
+        // The job deletes itself; its result is read here. Safe if this object is destroyed first.
+        connect(job, &KisVersioningJob::finished, this, [this, key, entry](KisVersioningJob *finishedJob) {
+            const bool failed = finishedJob->error() != KisVersioningJob::NoError;
+            const auto it = m_announced.constFind(key);
+            const bool stillWanted = it != m_announced.constEnd() && it->serial == entry.serial;
+            if (failed) {
+                // Offline, or another person's notice is registered: nothing to show. The next change tries again.
+                if (stillWanted) {
+                    m_announced.remove(key);
+                }
+            } else if (!stillWanted) {
+                // The notice was withdrawn while it was being sent.
+                withdraw(entry.projectPath, entry.relativePath);
             }
-        } else if (!stillWanted) {
-            // The notice was withdrawn while it was being sent.
-            withdraw(entry.projectPath, entry.relativePath);
-        }
+        });
     });
 }
 
 void ProjectsPresence::withdraw(const QString &projectPath, const QString &relativePath)
 {
     // The outcome is of no interest: a notice that cannot be withdrawn is not the artist's concern.
-    m_driver->announceEditing(projectPath, relativePath, false);
+    callDriver([this, projectPath, relativePath]() { m_driver->announceEditing(projectPath, relativePath, false); });
+}
+
+void ProjectsPresence::callDriver(const std::function<void()> &call)
+{
+    if (m_held) {
+        m_waiting.append(call);
+    } else {
+        call();
+    }
+}
+
+void ProjectsPresence::setHeld(bool held)
+{
+    m_held = held;
+    while (!m_held && !m_waiting.isEmpty()) {
+        m_waiting.takeFirst()();
+    }
 }
 
 void ProjectsPresence::documentClosed(const QString &absolutePath, bool hadChanges)
@@ -132,18 +151,20 @@ void ProjectsPresence::documentActivated(const QString &absolutePath)
     if (!locate(absolutePath, &projectPath, &relativePath)) {
         return;
     }
-    KisVersioningJob *job = m_driver->whoIsEditing(projectPath, {relativePath});
-    connect(job, &KisVersioningJob::finished, this, [this, absolutePath, relativePath](KisVersioningJob *finishedJob) {
-        if (finishedJob->error() != KisVersioningJob::NoError) {
-            return;
-        }
-        const QString me = m_driver->currentUser();
-        const QVector<EditingInfo> editing = finishedJob->result<QVector<EditingInfo>>();
-        for (const EditingInfo &info : editing) {
-            if (info.path == relativePath && !info.user.isEmpty() && info.user != me) {
-                Q_EMIT someoneElseIsEditing(absolutePath, info.user);
+    callDriver([this, projectPath, absolutePath, relativePath]() {
+        KisVersioningJob *job = m_driver->whoIsEditing(projectPath, {relativePath});
+        connect(job, &KisVersioningJob::finished, this, [this, absolutePath, relativePath](KisVersioningJob *finishedJob) {
+            if (finishedJob->error() != KisVersioningJob::NoError) {
                 return;
             }
-        }
+            const QString me = m_driver->currentUser();
+            const QVector<EditingInfo> editing = finishedJob->result<QVector<EditingInfo>>();
+            for (const EditingInfo &info : editing) {
+                if (info.path == relativePath && !info.user.isEmpty() && info.user != me) {
+                    Q_EMIT someoneElseIsEditing(absolutePath, info.user);
+                    return;
+                }
+            }
+        });
     });
 }

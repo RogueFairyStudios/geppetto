@@ -135,16 +135,56 @@ void KisVersioningFakeDriver::record(const QString &name, const QStringList &arg
     }
 }
 
-KisVersioningJob *KisVersioningFakeDriver::makeJob(const Outcome &outcome)
+namespace {
+
+void end(KisVersioningJob *job, KisVersioningJob::Error error, const QString &text, const QVariant &result)
+{
+    if (error == KisVersioningJob::NoError) {
+        job->finish(result);
+    } else {
+        job->fail(error, text);
+    }
+}
+
+} // namespace
+
+KisVersioningJob *KisVersioningFakeDriver::makeJob(const QString &name, const Outcome &outcome)
 {
     // The job delivers finished() later, on its own, and deletes itself.
     KisVersioningJob *job = new KisVersioningJob(this);
-    if (outcome.error == KisVersioningJob::NoError) {
-        job->finish(outcome.result);
+    if (m_holding.contains(name)) {
+        m_held[name].append({job, outcome});
     } else {
-        job->fail(outcome.error, outcome.text);
+        end(job, outcome.error, outcome.text, outcome.result);
     }
     return job;
+}
+
+void KisVersioningFakeDriver::setHeld(const QString &name, bool held)
+{
+    if (held) {
+        m_holding.insert(name);
+    } else {
+        m_holding.remove(name);
+    }
+}
+
+int KisVersioningFakeDriver::releaseHeld(const QString &name)
+{
+    const QList<Held> held = m_held.take(name);
+    int ended = 0;
+    for (const Held &entry : held) {
+        if (entry.job) {
+            end(entry.job, entry.outcome.error, entry.outcome.text, entry.outcome.result);
+            ++ended;
+        }
+    }
+    return ended;
+}
+
+int KisVersioningFakeDriver::heldCount(const QString &name) const
+{
+    return m_held.value(name).size();
 }
 
 QString KisVersioningFakeDriver::id() const { return QStringLiteral("fake"); }
@@ -162,19 +202,19 @@ void KisVersioningFakeDriver::setCurrentUserHook(const std::function<void()> &ho
 KisVersioningJob *KisVersioningFakeDriver::signIn(const QString &serverAddress)
 {
     record(QStringLiteral("signIn"), {serverAddress});
-    return makeJob(m_signIn);
+    return makeJob(QStringLiteral("signIn"), m_signIn);
 }
 
 KisVersioningJob *KisVersioningFakeDriver::signOut()
 {
     record(QStringLiteral("signOut"), {});
-    return makeJob(Outcome());
+    return makeJob(QStringLiteral("signOut"), Outcome());
 }
 
 KisVersioningJob *KisVersioningFakeDriver::listProjects(const QString &serverAddress)
 {
     record(QStringLiteral("listProjects"), {serverAddress});
-    return makeJob(m_listProjects);
+    return makeJob(QStringLiteral("listProjects"), m_listProjects);
 }
 
 KisVersioningJob *KisVersioningFakeDriver::listFolders(const ProjectInfo &project)
@@ -182,7 +222,7 @@ KisVersioningJob *KisVersioningFakeDriver::listFolders(const ProjectInfo &projec
     record(QStringLiteral("listFolders"), {project.id});
     Outcome outcome;
     outcome.result = QVariant::fromValue(m_projectFolders.value(project.id));
-    return makeJob(outcome);
+    return makeJob(QStringLiteral("listFolders"), outcome);
 }
 
 KisVersioningJob *KisVersioningFakeDriver::downloadProject(const ProjectInfo &project, const QString &localPath,
@@ -195,19 +235,19 @@ KisVersioningJob *KisVersioningFakeDriver::downloadProject(const ProjectInfo &pr
             QDir(localPath).mkpath(folder);
         }
     }
-    return makeJob(m_download);
+    return makeJob(QStringLiteral("downloadProject"), m_download);
 }
 
 KisVersioningJob *KisVersioningFakeDriver::setFolders(const QString &localPath, const QStringList &folders)
 {
     record(QStringLiteral("setFolders"), {localPath, folders.join(QLatin1Char(','))});
-    return makeJob(m_setFolders);
+    return makeJob(QStringLiteral("setFolders"), m_setFolders);
 }
 
 KisVersioningJob *KisVersioningFakeDriver::status(const QString &localPath)
 {
     record(QStringLiteral("status"), {localPath});
-    return makeJob(m_status);
+    return makeJob(QStringLiteral("status"), m_status);
 }
 
 KisVersioningJob *KisVersioningFakeDriver::synchronise(const QString &localPath, const QString &notes)
@@ -216,9 +256,9 @@ KisVersioningJob *KisVersioningFakeDriver::synchronise(const QString &localPath,
     if (m_syncQueue.isEmpty()) {
         Outcome outcome;
         outcome.result = QVariant::fromValue(SyncResult());
-        return makeJob(outcome);
+        return makeJob(QStringLiteral("synchronise"), outcome);
     }
-    return makeJob(m_syncQueue.takeFirst());
+    return makeJob(QStringLiteral("synchronise"), m_syncQueue.takeFirst());
 }
 
 KisVersioningJob *KisVersioningFakeDriver::resolve(const QString &localPath, const QString &path,
@@ -228,7 +268,7 @@ KisVersioningJob *KisVersioningFakeDriver::resolve(const QString &localPath, con
     record(QStringLiteral("resolve"), {localPath, path, QString::fromLatin1(names[int(resolution)]), mergedFile});
 
     if (m_resolve.error != KisVersioningJob::NoError) {
-        return makeJob(m_resolve);
+        return makeJob(QStringLiteral("resolve"), m_resolve);
     }
 
     const QString working = QDir(localPath).filePath(path);
@@ -241,7 +281,7 @@ KisVersioningJob *KisVersioningFakeDriver::resolve(const QString &localPath, con
         QFile::remove(working);
         QFile::copy(mergedFile, working);
     }
-    return makeJob(Outcome());
+    return makeJob(QStringLiteral("resolve"), Outcome());
 }
 
 KisVersioningJob *KisVersioningFakeDriver::fileHistory(const QString &localPath, const QString &path,
@@ -250,25 +290,25 @@ KisVersioningJob *KisVersioningFakeDriver::fileHistory(const QString &localPath,
     record(QStringLiteral("fileHistory"), {localPath, path, QString::number(offset), QString::number(limit)});
     Outcome outcome;
     outcome.result = QVariant::fromValue(QVector<VersionInfo>());
-    return makeJob(outcome);
+    return makeJob(QStringLiteral("fileHistory"), outcome);
 }
 
 KisVersioningJob *KisVersioningFakeDriver::fetchFileAtVersion(const QString &localPath, const QString &path,
                                                               const QString &versionId, const QString &outputPath)
 {
     record(QStringLiteral("fetchFileAtVersion"), {localPath, path, versionId, outputPath});
-    return makeJob(Outcome());
+    return makeJob(QStringLiteral("fetchFileAtVersion"), Outcome());
 }
 
 KisVersioningJob *KisVersioningFakeDriver::announceEditing(const QString &localPath, const QString &path, bool editing)
 {
     record(QStringLiteral("announceEditing"),
            {localPath, path, editing ? QStringLiteral("true") : QStringLiteral("false")});
-    return makeJob(m_announce);
+    return makeJob(QStringLiteral("announceEditing"), m_announce);
 }
 
 KisVersioningJob *KisVersioningFakeDriver::whoIsEditing(const QString &localPath, const QStringList &paths)
 {
     record(QStringLiteral("whoIsEditing"), {localPath, paths.join(QLatin1Char(','))});
-    return makeJob(m_editing);
+    return makeJob(QStringLiteral("whoIsEditing"), m_editing);
 }

@@ -28,6 +28,20 @@ kis_add_test(
 )
 target_include_directories(ProjectsDocumentHostTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
+# The panel's decisions, without a window, with the fake driver and fake documents.
+kis_add_test(
+    ProjectsControllerTest.cpp
+    ../ProjectsController.cpp
+    ../ProjectsModel.cpp
+    ../ProjectsSyncRunner.cpp
+    ../ProjectsPresence.cpp
+    ../ProjectsDocumentHost.cpp
+    ${VERSIONING_TESTS_DIR}/KisVersioningFakeDriver.cpp
+    TEST_NAME ProjectsControllerTest
+    LINK_LIBRARIES kritaversioning kritaui kritatestsdk
+)
+target_include_directories(ProjectsControllerTest PRIVATE ${VERSIONING_TESTS_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
+
 # The logic runs without a window, with the fake driver.
 kis_add_test(
     ProjectsPresenceTest.cpp

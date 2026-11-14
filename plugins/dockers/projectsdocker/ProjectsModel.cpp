@@ -369,7 +369,7 @@ void ProjectsModel::stepDone(const std::shared_ptr<Refresh> &refresh)
     QStringList released = refresh->releasedProjects;
     released.removeDuplicates();
     for (const QString &projectId : std::as_const(released)) {
-        m_busyProjects.remove(projectId);
+        setBusy(projectId, false);
         m_downloadTargets.remove(projectId);
         startWaitingChoice(projectId);
     }
@@ -520,6 +520,39 @@ bool ProjectsModel::signInNeeded() const
     return m_signInNeeded;
 }
 
+void ProjectsModel::setChoicesAllowed(bool allowed)
+{
+    m_choicesAllowed = allowed;
+}
+
+bool ProjectsModel::choicesAllowed() const
+{
+    return m_choicesAllowed;
+}
+
+bool ProjectsModel::isRefreshing() const
+{
+    return bool(m_refresh);
+}
+
+bool ProjectsModel::isBusy() const
+{
+    return !m_busyProjects.isEmpty();
+}
+
+void ProjectsModel::setBusy(const QString &projectId, bool busy)
+{
+    const bool wasBusy = isBusy();
+    if (busy) {
+        m_busyProjects.insert(projectId);
+    } else {
+        m_busyProjects.remove(projectId);
+    }
+    if (wasBusy != isBusy()) {
+        Q_EMIT busyChanged();
+    }
+}
+
 void ProjectsModel::addFolder(const QString &path)
 {
     const QString folder = cleanPath(path);
@@ -619,7 +652,7 @@ bool ProjectsModel::startChoice(const Choice &choice)
         return false;
     }
 
-    m_busyProjects.insert(id);
+    setBusy(id, true);
     if (!choice.chosen) {
         untick(choice, stored.localPath);
     } else if (downloaded) {
@@ -672,7 +705,7 @@ void ProjectsModel::untick(const Choice &choice, const QString &localPath)
 
 void ProjectsModel::runProjectJob(const QString &projectId, KisVersioningJob *job, const std::function<void()> &onSuccess)
 {
-    m_busyProjects.insert(projectId);
+    setBusy(projectId, true);
     connect(job, &KisVersioningJob::finished, this, [this, projectId, onSuccess](KisVersioningJob *job) {
         if (job->error() == KisVersioningJob::NoError) {
             onSuccess();
@@ -812,7 +845,7 @@ QVariant ProjectsModel::data(const QModelIndex &index, int role) const
 bool ProjectsModel::setData(const QModelIndex &index, const QVariant &value, int role)
 {
     Node *node = nodeAt(index);
-    if (!node || role != Qt::CheckStateRole || index.column() != 0 || node->choiceName.isEmpty()) {
+    if (!node || role != Qt::CheckStateRole || index.column() != 0 || node->choiceName.isEmpty() || !m_choicesAllowed) {
         return false;
     }
     return chooseFolder(node, value.toInt() == Qt::Checked);
@@ -825,7 +858,7 @@ Qt::ItemFlags ProjectsModel::flags(const QModelIndex &index) const
         return Qt::NoItemFlags;
     }
     Qt::ItemFlags flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
-    if (index.column() == 0 && !node->choiceName.isEmpty()) {
+    if (index.column() == 0 && !node->choiceName.isEmpty() && m_choicesAllowed) {
         flags |= Qt::ItemIsUserCheckable;
     }
     return flags;

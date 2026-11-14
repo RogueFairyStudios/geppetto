@@ -8,26 +8,19 @@
 #include <QSet>
 #include <QStringList>
 
-#include <KisVersioningSettings.h>
-
-class KisDocument;
-class KisVersioningDriver;
-class ProjectsDocumentHost;
-class ProjectsModel;
-class ProjectsPresence;
-class ProjectsSyncRunner;
+class ProjectsController;
 class QLabel;
 class QLineEdit;
 class QModelIndex;
 class QProgressBar;
 class QPushButton;
-class QTimer;
 class QTreeView;
 
 /**
- * The "Projects" panel: sign in when the driver needs it, choose the folders,
- * see the state of each file, and synchronise every downloaded project with
- * one button. It talks only to the versioning library.
+ * The "Projects" panel of one window: sign in when the driver needs it, choose
+ * the folders, see the state of each file, and synchronise every downloaded
+ * project with one button. What it shows and allows comes from the
+ * application's ProjectsController, which the panels of all windows share.
  */
 class ProjectsDock : public QDockWidget
 {
@@ -38,36 +31,19 @@ public:
 
 private:
     void buildInterface(QWidget *page);
-    void updateAccount();
+    void update();
     void signIn();
     void addFolder();
     void synchronise();
-    void onRefreshed();
-    void onProjectSynchronised(int project);
     void onSyncProgress(int project, int projectCount, qint64 done, qint64 total, const QString &label);
-    void onSyncFinished();
     void openItem(const QModelIndex &index);
     void showContextMenu(const QPoint &position);
-    void updateSaveWarning();
-    void watchDocument(KisDocument *document);
-    void onDocumentSaved(const QString &path);
-    void showMessages(const QStringList &messages);
     QString keyOf(const QModelIndex &index) const;
     void rememberExpanded();
     void restoreExpanded();
 
-    KisVersioningSettings m_settings;
-    KisVersioningDriver *m_driver {nullptr};
-    ProjectsDocumentHost *m_host {nullptr};
-    ProjectsModel *m_model {nullptr};
-    ProjectsSyncRunner *m_runner {nullptr};
-    ProjectsPresence *m_presence {nullptr};
-    /// Documents with unsaved changes, by the form in which paths are compared: the application
-    /// no longer says so when it announces that a document was removed.
-    QSet<QString> m_unsavedDocuments;
-    QTimer *m_refreshTimer {nullptr};
-    bool m_signedIn {false};
-    QStringList m_syncMessages;
+    ProjectsController *m_controller {nullptr};
+    bool m_startedRun {false};
     QSet<QString> m_expanded;
     QSet<QString> m_knownProjects;
 

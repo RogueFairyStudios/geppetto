@@ -61,6 +61,14 @@ public:
     /// Removes the "conflict to resolve" marker of the copy at @p index. No file is deleted.
     void markConflictResolved(const QModelIndex &index);
 
+    /// While false, ticks and unticks are refused (the boxes cannot be changed).
+    void setChoicesAllowed(bool allowed);
+    bool choicesAllowed() const;
+    /// True while a refresh is reading the disk or waiting for the driver.
+    bool isRefreshing() const;
+    /// True while a folder choice of some project is under way, or not shown in the list yet.
+    bool isBusy() const;
+
     QModelIndex index(int row, int column, const QModelIndex &parent = QModelIndex()) const override;
     QModelIndex parent(const QModelIndex &child) const override;
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
@@ -73,6 +81,8 @@ Q_SIGNALS:
     void refreshed();
     /// Something the artist asked for could not be done; @p text says why.
     void operationFailed(const QString &text);
+    /// isBusy() changed.
+    void busyChanged();
 
 private:
     struct Node;
@@ -106,6 +116,7 @@ private:
     QString freeFolderFor(const KisVersioning::ProjectInfo &info) const;
     void runProjectJob(const QString &projectId, KisVersioningJob *job, const std::function<void()> &onSuccess);
     void releaseAfterRefresh(const QString &projectId);
+    void setBusy(const QString &projectId, bool busy);
 
     KisVersioningDriver *m_driver;
     KisVersioningSettings *m_settings;
@@ -113,6 +124,7 @@ private:
     std::vector<Project> m_projects;
     std::unique_ptr<Node> m_root;
     bool m_signInNeeded {false};
+    bool m_choicesAllowed {true};
     int m_changedFiles {0};
     int m_incoming {0};
     int m_pendingUpload {0};

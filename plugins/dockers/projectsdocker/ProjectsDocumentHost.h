@@ -9,7 +9,7 @@
 #include <QPointer>
 #include <QStringList>
 
-#include <KisVersioningSyncSession.h>
+#include "ProjectsDocuments.h"
 
 class KisDocument;
 
@@ -26,7 +26,7 @@ class KisDocument;
  * zoom and position of each view. A document with unsaved changes is never
  * reloaded.
  */
-class ProjectsDocumentHost : public QObject, public KisVersioningDocumentHost
+class ProjectsDocumentHost : public QObject, public ProjectsDocuments
 {
     Q_OBJECT
 public:
@@ -37,22 +37,26 @@ public:
     void saveDocument(const QString &absolutePath, std::function<void(bool)> done) override;
     bool isOpenAndUnmodified(const QString &absolutePath) const override;
     void reloadDocument(const QString &absolutePath) override;
+    QStringList openDocumentsIn(const QString &folder) const override;
+    QStringList unsavedForeignDocuments(const QString &projectPath) const override;
 
     /// True when a document of that file is open with unsaved changes.
     bool isOpenAndModified(const QString &absolutePath) const;
     /// Brings forward a view of the open document of that file; false when the file is not open.
-    bool showDocument(const QString &absolutePath) const;
+    static bool showDocument(const QString &absolutePath);
     /// The open documents of that file that reloadDocument() may replace: none when any of them
     /// has unsaved changes or is being saved, and none when the file is not open.
     QList<KisDocument *> documentsToReload(const QString &absolutePath) const;
 
     /// The form in which two paths are compared.
     static QString pathKey(const QString &path);
+    /// True when @p document is kept in Krita's own format, which saves with no loss and no question.
+    static bool isNativeFormat(const KisDocument *document);
     /// True when @p path is @p folder or lies inside it.
     static bool isInside(const QString &path, const QString &folder);
 
 private:
-    QList<KisDocument *> documentsAt(const QString &absolutePath) const;
+    static QList<KisDocument *> documentsAt(const QString &absolutePath);
     void reloadNow(const QString &absolutePath);
     void reload(const QPointer<KisDocument> &document);
 };

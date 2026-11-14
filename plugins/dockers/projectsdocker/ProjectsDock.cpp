@@ -5,7 +5,6 @@
 
 #include <functional>
 
-#include <QDir>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -15,27 +14,19 @@
 #include <QPersistentModelIndex>
 #include <QProgressBar>
 #include <QPushButton>
-#include <QTimer>
 #include <QTreeView>
 #include <QVBoxLayout>
 
 #include <klocalizedstring.h>
 
-#include <KisDocument.h>
-#include <KisMainWindow.h>
 #include <KisPart.h>
-#include <KisView.h>
-#include <KisViewManager.h>
 #include <KoFileDialog.h>
 
 #include <KisVersioningDriver.h>
-#include <KisVersioningDriverRegistry.h>
-#include <KisVersioningJob.h>
 
+#include "ProjectsController.h"
 #include "ProjectsDocumentHost.h"
 #include "ProjectsModel.h"
-#include "ProjectsPresence.h"
-#include "ProjectsSyncRunner.h"
 
 using namespace KisVersioning;
 
@@ -45,13 +36,8 @@ ProjectsDock::ProjectsDock()
     QWidget *page = new QWidget(this);
     setWidget(page);
 
-    // The driver chosen in the settings, or the folder on this computer when that one is missing.
-    KisVersioningDriverRegistry *registry = KisVersioningDriverRegistry::instance();
-    KisVersioningDriverFactory *factory = registry->value(m_settings.driverId());
-    if (!factory) {
-        factory = registry->value(QStringLiteral("localfolder"));
-    }
-    if (!factory) {
+    m_controller = ProjectsController::instance();
+    if (!m_controller) {
         auto *layout = new QVBoxLayout(page);
         auto *label = new QLabel(i18n("Projects are not available in this installation."), page);
         label->setWordWrap(true);
@@ -60,78 +46,43 @@ ProjectsDock::ProjectsDock()
         return;
     }
 
-    m_driver = factory->create(this);
-    m_host = new ProjectsDocumentHost(this);
-    m_model = new ProjectsModel(m_driver, &m_settings, this);
-    m_runner = new ProjectsSyncRunner(m_driver, m_host, this);
-    m_presence = new ProjectsPresence(m_driver, &m_settings, this);
-    m_refreshTimer = new QTimer(this);
-    m_refreshTimer->setSingleShot(true);
-    m_refreshTimer->setInterval(500);
-    m_signedIn = m_driver->capabilities().testFlag(SignIn) && !m_driver->currentUser().isEmpty();
-
     buildInterface(page);
 
-    connect(m_refreshTimer, &QTimer::timeout, m_model, &ProjectsModel::refresh);
-    connect(m_model, &ProjectsModel::refreshed, this, &ProjectsDock::onRefreshed);
-    connect(m_model, &ProjectsModel::operationFailed, this, [this](const QString &text) { showMessages({text}); });
-    connect(m_model, &QAbstractItemModel::modelAboutToBeReset, this, &ProjectsDock::rememberExpanded);
-    connect(m_model, &QAbstractItemModel::modelReset, this, &ProjectsDock::restoreExpanded);
-    connect(m_runner, &ProjectsSyncRunner::progress, this, &ProjectsDock::onSyncProgress);
-    connect(m_runner, &ProjectsSyncRunner::projectFinished, this, &ProjectsDock::onProjectSynchronised);
-    connect(m_runner, &ProjectsSyncRunner::finished, this, &ProjectsDock::onSyncFinished);
+    ProjectsModel *model = m_controller->model();
+    connect(m_controller, &ProjectsController::changed, this, &ProjectsDock::update);
+    connect(m_controller, &ProjectsController::progress, this, &ProjectsDock::onSyncProgress);
+    connect(m_controller, &ProjectsController::runFinished, this, [this](bool everythingWentWell) {
+        // The notes went into the versions of this window's run.
+        if (m_startedRun && everythingWentWell) {
+            m_notesEdit->clear();
+        }
+        m_startedRun = false;
+    });
+    connect(model, &QAbstractItemModel::modelAboutToBeReset, this, &ProjectsDock::rememberExpanded);
+    connect(model, &QAbstractItemModel::modelReset, this, &ProjectsDock::restoreExpanded);
+    connect(model, &ProjectsModel::refreshed, this, &ProjectsDock::update);
+    connect(this, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        m_controller->setPanelVisible(this, visible);
+    });
 
-    // The warning about open documents follows their changes; a save changes the state of a file.
-    KisPart *part = KisPart::instance();
-    connect(part, &KisPart::sigDocumentAdded, this, [this](KisDocument *document) {
-        watchDocument(document);
-        updateSaveWarning();
-    });
-    connect(part, &KisPart::sigDocumentRemoved, this, &ProjectsDock::updateSaveWarning);
-    connect(part, &KisPart::sigDocumentRemoved, this, [this](const QString &path) {
-        m_presence->documentClosed(path, m_unsavedDocuments.remove(ProjectsDocumentHost::pathKey(path)));
-    });
-    // Opening a file that someone else is editing: say so. Nobody is prevented from editing.
-    connect(part, &KisPart::sigViewAdded, this, [this](KisView *view) {
-        if (view && view->document()) {
-            m_presence->documentActivated(view->document()->path());
-        }
-    });
-    connect(m_presence, &ProjectsPresence::someoneElseIsEditing, this, [](const QString &, const QString &user) {
-        KisMainWindow *window = KisPart::instance()->currentMainwindow();
-        if (window && window->viewManager()) {
-            window->viewManager()->showFloatingMessage(i18n("%1 is editing this file", user), QIcon());
-        }
-    });
-    connect(part, &KisPart::sigDocumentSaved, this, &ProjectsDock::onDocumentSaved);
-    const QList<QPointer<KisDocument>> documents = part->documents();
-    for (const QPointer<KisDocument> &document : documents) {
-        if (document) {
-            watchDocument(document);
-        }
-    }
-
-    updateAccount();
-    updateSaveWarning();
-    m_model->refresh();
+    restoreExpanded();
+    update();
 }
 
 ProjectsDock::~ProjectsDock()
 {
-    // What holds the settings, the driver or the host goes first, while all three still exist.
-    delete m_presence;
-    delete m_runner;
-    delete m_model;
-    delete m_host;
-    delete m_driver;
+    if (m_controller) {
+        m_controller->setPanelVisible(this, false);
+    }
 }
 
 void ProjectsDock::buildInterface(QWidget *page)
 {
-    const Capabilities capabilities = m_driver->capabilities();
+    const Capabilities capabilities = m_controller->driver()->capabilities();
     auto *layout = new QVBoxLayout(page);
 
     m_userLabel = new QLabel(page);
+    m_userLabel->setWordWrap(true);
     layout->addWidget(m_userLabel);
     auto *accountRow = new QHBoxLayout();
     m_addressEdit = new QLineEdit(page);
@@ -149,7 +100,7 @@ void ProjectsDock::buildInterface(QWidget *page)
     connect(m_addFolderButton, &QPushButton::clicked, this, &ProjectsDock::addFolder);
 
     m_view = new QTreeView(page);
-    m_view->setModel(m_model);
+    m_view->setModel(m_controller->model());
     m_view->setHeaderHidden(true);
     m_view->setUniformRowHeights(true);
     m_view->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -193,43 +144,55 @@ void ProjectsDock::buildInterface(QWidget *page)
     connect(m_syncButton, &QPushButton::clicked, this, &ProjectsDock::synchronise);
 }
 
-void ProjectsDock::updateAccount()
+void ProjectsDock::update()
 {
-    // A driver without sign-in has no address and no button.
-    const bool hasSignIn = m_driver->capabilities().testFlag(SignIn);
-    m_userLabel->setVisible(hasSignIn && m_signedIn);
-    if (hasSignIn && m_signedIn) {
-        m_userLabel->setText(i18n("%1 · signed in", m_driver->currentUser()));
+    using Account = ProjectsController::Account;
+    const Account account = m_controller->account();
+    const bool hasSignIn = account != Account::NotNeeded;
+
+    // The account: who is signed in, or what signing in asks of the artist.
+    QString accountText;
+    if (m_controller->isSigningIn()) {
+        accountText = m_controller->signInProgress();
+    } else if (account == Account::SignedIn) {
+        accountText = i18n("%1 · signed in", m_controller->user());
     }
-    m_addressEdit->setVisible(hasSignIn && !m_signedIn && m_settings.serverAddress().isEmpty());
-    m_signInButton->setVisible(hasSignIn && !m_signedIn);
+    m_userLabel->setText(accountText);
+    m_userLabel->setVisible(!accountText.isEmpty());
+    const bool canSignIn = hasSignIn && (account == Account::SignedOut || account == Account::Unknown);
+    m_addressEdit->setVisible(canSignIn && m_controller->serverAddress().isEmpty());
+    m_signInButton->setVisible(canSignIn);
+    m_signInButton->setEnabled(!m_controller->isSigningIn());
+
+    const QStringList messages = m_controller->messages();
+    m_messageLabel->setText(messages.join(QLatin1Char('\n')));
+    m_messageLabel->setVisible(!messages.isEmpty());
+
+    m_summaryLabel->setText(m_controller->model()->summaryText());
+    m_pendingLabel->setVisible(m_controller->pendingUpload());
+
+    const int toSave = m_controller->documentsToSave();
+    m_saveWarningLabel->setText(i18np("1 open document will be saved", "%1 open documents will be saved", toSave));
+    m_saveWarningLabel->setVisible(toSave > 0);
+
+    const bool synchronising = m_controller->isSynchronising();
+    if (synchronising && !m_progressBar->isVisible()) {
+        m_progressBar->setRange(0, 0);
+    }
+    m_progressBar->setVisible(synchronising);
+    m_syncButton->setEnabled(m_controller->canSynchronise());
+    m_addFolderButton->setEnabled(m_controller->canChooseFolders());
+    // The boxes follow whether choices are taken now.
+    m_view->viewport()->update();
 }
 
 void ProjectsDock::signIn()
 {
-    QString address = m_settings.serverAddress();
-    if (address.isEmpty()) {
-        address = m_addressEdit->text().trimmed();
-    }
-    if (address.isEmpty()) {
+    if (m_controller->serverAddress().isEmpty() && m_addressEdit->text().trimmed().isEmpty()) {
         m_addressEdit->setFocus();
         return;
     }
-    m_signInButton->setEnabled(false);
-    KisVersioningJob *job = m_driver->signIn(address);
-    // The job deletes itself after finished(): its answer is read in the slot.
-    connect(job, &KisVersioningJob::finished, this, [this, address](KisVersioningJob *job) {
-        m_signInButton->setEnabled(true);
-        if (job->error() != KisVersioningJob::NoError) {
-            showMessages({job->errorText()});
-            return;
-        }
-        m_settings.setServerAddress(address);
-        m_signedIn = true;
-        showMessages({});
-        updateAccount();
-        m_model->refresh();
-    });
+    m_controller->signIn(m_addressEdit->text());
 }
 
 void ProjectsDock::addFolder()
@@ -238,96 +201,28 @@ void ProjectsDock::addFolder()
     dialog.setCaption(i18n("Choose a project folder"));
     const QString folder = dialog.filename();
     if (!folder.isEmpty()) {
-        m_model->addFolder(folder);
+        m_controller->addFolder(folder);
     }
 }
 
 void ProjectsDock::synchronise()
 {
-    if (m_runner->isRunning()) {
+    if (!m_controller->canSynchronise()) {
         return;
     }
-    // A project whose folder is missing is already shown with its error; the others go ahead.
-    QStringList projects;
-    const QStringList downloaded = m_model->downloadedProjectPaths();
-    for (const QString &path : downloaded) {
-        if (QFileInfo(path).isDir()) {
-            projects << path;
-        }
-    }
-    const QString notes = (m_driver->capabilities() & Notes) ? m_notesEdit->text().trimmed() : QString();
-
-    m_syncMessages.clear();
-    showMessages({});
-    m_syncButton->setEnabled(false);
+    const bool notes = m_controller->driver()->capabilities().testFlag(Notes);
+    m_startedRun = true;
     m_progressBar->setRange(0, 0);
-    m_progressBar->setVisible(true);
-    m_runner->start(projects, notes);
+    m_controller->synchronise(notes ? m_notesEdit->text().trimmed() : QString());
 }
 
 void ProjectsDock::onSyncProgress(int project, int projectCount, qint64 done, qint64 total, const QString &label)
 {
     const qint64 steps = 100;
     const int fraction = total > 0 ? int(qBound(qint64(0), done * steps / total, steps)) : 0;
-    m_progressBar->setRange(0, projectCount * steps);
-    m_progressBar->setValue(project * steps + fraction);
+    m_progressBar->setRange(0, projectCount * int(steps));
+    m_progressBar->setValue(project * int(steps) + fraction);
     m_progressBar->setFormat(label.isEmpty() ? QStringLiteral("%p%") : label);
-}
-
-void ProjectsDock::onProjectSynchronised(int project)
-{
-    const ProjectsSyncRunner::Result result = m_runner->results().at(project);
-    const KisVersioningSyncSession::Report &report = result.report;
-    if (report.error == KisVersioningJob::NoError) {
-        m_presence->projectSynchronised(result.projectPath);
-    }
-    for (const QString &path : report.keptBoth) {
-        m_syncMessages << i18n("Both versions of %1 were kept", QFileInfo(path).fileName());
-    }
-    // Received or kept both while the document had unsaved changes: it was not reloaded.
-    for (const QString &path : result.staleDocuments) {
-        m_syncMessages << i18n("%1 was replaced by the other version while you kept working. "
-                               "Save your work under another name.",
-                               QFileInfo(path).fileName());
-    }
-    if (report.error == KisVersioningJob::NotSignedIn && (m_driver->capabilities() & SignIn)) {
-        m_signedIn = false;
-        updateAccount();
-        if (!m_syncMessages.contains(i18n("Sign in again to send your work"))) {
-            m_syncMessages << i18n("Sign in again to send your work");
-        }
-    } else if (report.error != KisVersioningJob::NoError) {
-        m_syncMessages << report.errorText;
-    }
-}
-
-void ProjectsDock::onSyncFinished()
-{
-    bool allSent = true;
-    const QVector<ProjectsSyncRunner::Result> results = m_runner->results();
-    for (const ProjectsSyncRunner::Result &result : results) {
-        allSent = allSent && result.report.error == KisVersioningJob::NoError;
-    }
-    if (allSent) {
-        m_notesEdit->clear();
-    }
-    showMessages(m_syncMessages);
-    m_progressBar->setVisible(false);
-    m_syncButton->setEnabled(true);
-    m_model->refresh();
-}
-
-void ProjectsDock::onRefreshed()
-{
-    m_summaryLabel->setText(m_model->summaryText());
-    m_pendingLabel->setVisible(m_model->pendingUploadCount() > 0);
-    if (m_model->signInNeeded() && (m_driver->capabilities() & SignIn) && m_signedIn) {
-        // The session expired: back to the signed-out state.
-        m_signedIn = false;
-        showMessages({i18n("Sign in again to send your work")});
-    }
-    updateAccount();
-    updateSaveWarning();
 }
 
 void ProjectsDock::openItem(const QModelIndex &index)
@@ -337,7 +232,7 @@ void ProjectsDock::openItem(const QModelIndex &index)
         return;
     }
     // A file already open is brought forward rather than opened a second time.
-    if (!m_host->showDocument(path)) {
+    if (!ProjectsDocumentHost::showDocument(path)) {
         KisPart::instance()->openExistingFile(path);
     }
 }
@@ -345,7 +240,7 @@ void ProjectsDock::openItem(const QModelIndex &index)
 void ProjectsDock::showContextMenu(const QPoint &position)
 {
     const QModelIndex index = m_view->indexAt(position);
-    if (!index.isValid() || !index.data(ProjectsModel::ConflictCopyRole).toBool()) {
+    if (!index.isValid() || !index.data(ProjectsModel::ConflictCopyRole).toBool() || !m_controller->canChooseFolders()) {
         return;
     }
     const QPersistentModelIndex copy(index.sibling(index.row(), 0));
@@ -355,59 +250,10 @@ void ProjectsDock::showContextMenu(const QPoint &position)
     connect(resolved, &QAction::triggered, this, [this, copy]() {
         // The list may have been read again while the menu was open.
         if (copy.isValid()) {
-            m_model->markConflictResolved(copy);
+            m_controller->markConflictResolved(copy);
         }
     });
     menu->popup(m_view->viewport()->mapToGlobal(position));
-}
-
-void ProjectsDock::updateSaveWarning()
-{
-    int count = 0;
-    const QStringList projects = m_model->downloadedProjectPaths();
-    for (const QString &project : projects) {
-        count += m_host->modifiedOpenDocuments(project).size();
-    }
-    m_saveWarningLabel->setText(i18np("1 open document will be saved", "%1 open documents will be saved", count));
-    m_saveWarningLabel->setVisible(count > 0);
-}
-
-void ProjectsDock::watchDocument(KisDocument *document)
-{
-    connect(document, &KisDocument::modified, this, &ProjectsDock::updateSaveWarning, Qt::UniqueConnection);
-    connect(document, &KisDocument::modified, this, [this, document](bool modified) {
-        const QString key = ProjectsDocumentHost::pathKey(document->path());
-        if (modified) {
-            m_unsavedDocuments.insert(key);
-            m_presence->documentModified(document->path());
-        } else {
-            m_unsavedDocuments.remove(key);
-        }
-    });
-}
-
-void ProjectsDock::onDocumentSaved(const QString &path)
-{
-    updateSaveWarning();
-    const QStringList projects = m_model->downloadedProjectPaths();
-    for (const QString &project : projects) {
-        if (ProjectsDocumentHost::isInside(path, project)) {
-            m_refreshTimer->start();
-            return;
-        }
-    }
-}
-
-void ProjectsDock::showMessages(const QStringList &messages)
-{
-    QStringList shown;
-    for (const QString &message : messages) {
-        if (!message.isEmpty()) {
-            shown << message;
-        }
-    }
-    m_messageLabel->setText(shown.join(QLatin1Char('\n')));
-    m_messageLabel->setVisible(!shown.isEmpty());
 }
 
 QString ProjectsDock::keyOf(const QModelIndex &index) const
@@ -422,9 +268,10 @@ QString ProjectsDock::keyOf(const QModelIndex &index) const
 void ProjectsDock::rememberExpanded()
 {
     m_expanded.clear();
+    ProjectsModel *model = m_controller->model();
     std::function<void(const QModelIndex &)> walk = [&](const QModelIndex &parent) {
-        for (int row = 0; row < m_model->rowCount(parent); ++row) {
-            const QModelIndex index = m_model->index(row, 0, parent);
+        for (int row = 0; row < model->rowCount(parent); ++row) {
+            const QModelIndex index = model->index(row, 0, parent);
             if (m_view->isExpanded(index)) {
                 m_expanded.insert(keyOf(index));
                 walk(index);
@@ -438,9 +285,10 @@ void ProjectsDock::restoreExpanded()
 {
     // The list is read again after every change: what was open stays open, and a project seen
     // for the first time opens.
+    ProjectsModel *model = m_controller->model();
     std::function<void(const QModelIndex &)> walk = [&](const QModelIndex &parent) {
-        for (int row = 0; row < m_model->rowCount(parent); ++row) {
-            const QModelIndex index = m_model->index(row, 0, parent);
+        for (int row = 0; row < model->rowCount(parent); ++row) {
+            const QModelIndex index = model->index(row, 0, parent);
             const QString key = keyOf(index);
             bool expand = m_expanded.contains(key);
             if (!parent.isValid() && !m_knownProjects.contains(key)) {

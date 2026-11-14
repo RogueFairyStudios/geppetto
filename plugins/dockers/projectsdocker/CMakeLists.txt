@@ -6,6 +6,7 @@ add_subdirectory( tests )
 set(kritaprojectsdocker_SOURCES
     ProjectsDockerPlugin.cpp
     ProjectsDock.cpp
+    ProjectsController.cpp
     ProjectsModel.cpp
     ProjectsDocumentHost.cpp
     ProjectsSyncRunner.cpp

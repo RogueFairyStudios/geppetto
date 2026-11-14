@@ -9,6 +9,8 @@
 #include <QByteArray>
 #include <QHash>
 #include <QList>
+#include <QPointer>
+#include <QSet>
 #include <QVector>
 
 #include <KisVersioningDriver.h>
@@ -60,6 +62,12 @@ public:
     /// A successful downloadProject() creates the local folder and the chosen folders in it.
     void setDownloadError(KisVersioningJob::Error error, const QString &text = QString());
     void setSetFoldersError(KisVersioningJob::Error error, const QString &text = QString());
+    /// While held, the jobs of the operation named @p name (for example "synchronise") do not end;
+    /// releaseHeld() ends them with the outcome they would have had.
+    void setHeld(const QString &name, bool held);
+    /// Ends the held jobs of @p name, in the order they were made; returns how many ended.
+    int releaseHeld(const QString &name);
+    int heldCount(const QString &name) const;
 
     // Recording
     const QList<Call> &calls() const;
@@ -96,7 +104,7 @@ private:
     };
 
     void record(const QString &name, const QStringList &args);
-    KisVersioningJob *makeJob(const Outcome &outcome);
+    KisVersioningJob *makeJob(const QString &name, const Outcome &outcome);
     static Outcome failure(KisVersioningJob::Error error, const QString &text);
 
     QString m_user;
@@ -115,6 +123,12 @@ private:
     std::function<void()> m_userHook;
     QStringList *m_sharedLog {nullptr};
     QList<Call> m_calls;
+    struct Held {
+        QPointer<KisVersioningJob> job;
+        Outcome outcome;
+    };
+    QSet<QString> m_holding;
+    QHash<QString, QList<Held>> m_held;
 };
 
 #endif // KISVERSIONINGFAKEDRIVER_H

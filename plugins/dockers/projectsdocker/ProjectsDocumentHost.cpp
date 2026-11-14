@@ -50,7 +50,7 @@ bool ProjectsDocumentHost::isInside(const QString &path, const QString &folder)
     return pathKeyed.startsWith(folderKeyed.endsWith(QLatin1Char('/')) ? folderKeyed : folderKeyed + QLatin1Char('/'));
 }
 
-QList<KisDocument *> ProjectsDocumentHost::documentsAt(const QString &absolutePath) const
+QList<KisDocument *> ProjectsDocumentHost::documentsAt(const QString &absolutePath)
 {
     QList<KisDocument *> found;
     const QString key = pathKey(absolutePath);
@@ -78,6 +78,44 @@ QStringList ProjectsDocumentHost::modifiedOpenDocuments(const QString &projectPa
         }
     }
     return paths;
+}
+
+QStringList ProjectsDocumentHost::openDocumentsIn(const QString &folder) const
+{
+    QStringList paths;
+    const QList<QPointer<KisDocument>> documents = KisPart::instance()->documents();
+    for (const QPointer<KisDocument> &document : documents) {
+        if (!document || document->path().isEmpty()) {
+            continue;
+        }
+        const QString path = QDir::cleanPath(QDir::fromNativeSeparators(document->path()));
+        if (isInside(path, folder) && !paths.contains(path)) {
+            paths << path;
+        }
+    }
+    return paths;
+}
+
+QStringList ProjectsDocumentHost::unsavedForeignDocuments(const QString &projectPath) const
+{
+    QStringList paths;
+    const QList<QPointer<KisDocument>> documents = KisPart::instance()->documents();
+    for (const QPointer<KisDocument> &document : documents) {
+        if (!document || !document->isModified() || isNativeFormat(document)) {
+            continue;
+        }
+        const QString path = QDir::cleanPath(QDir::fromNativeSeparators(document->path()));
+        if (isInside(path, projectPath) && !KisVersioning::isNeverSynced(QFileInfo(path).fileName())
+            && !paths.contains(path)) {
+            paths << path;
+        }
+    }
+    return paths;
+}
+
+bool ProjectsDocumentHost::isNativeFormat(const KisDocument *document)
+{
+    return document->mimeType() == KisDocument::nativeFormatMimeType();
 }
 
 void ProjectsDocumentHost::saveDocument(const QString &absolutePath, std::function<void(bool)> done)
@@ -150,7 +188,7 @@ bool ProjectsDocumentHost::isOpenAndModified(const QString &absolutePath) const
     return std::any_of(open.begin(), open.end(), [](KisDocument *document) { return document->isModified(); });
 }
 
-bool ProjectsDocumentHost::showDocument(const QString &absolutePath) const
+bool ProjectsDocumentHost::showDocument(const QString &absolutePath)
 {
     const QList<KisDocument *> open = documentsAt(absolutePath);
     KisMainWindow *window = KisPart::instance()->currentMainwindow();

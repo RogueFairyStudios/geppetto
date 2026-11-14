@@ -146,12 +146,12 @@ msgstr[1] "%1 documentos abertos serão salvos"
 msgid "pending upload"
 msgstr "pendente de envio"
 
-#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+#: plugins/dockers/projectsdocker/ProjectsController.cpp
 #, kde-format
 msgid "Both versions of %1 were kept"
 msgstr "As duas versões de %1 foram mantidas"
 
-#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+#: plugins/dockers/projectsdocker/ProjectsController.cpp
 #, kde-format
 msgid ""
 "%1 was replaced by the other version while you kept working. Save your work "
@@ -160,9 +160,17 @@ msgstr ""
 "%1 foi trocado pela outra versão enquanto você continuava trabalhando. Salve "
 "o seu trabalho com outro nome."
 
-#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+#: plugins/dockers/projectsdocker/ProjectsController.cpp
 msgid "Sign in again to send your work"
 msgstr "Entre de novo para enviar o seu trabalho"
+
+#: plugins/dockers/projectsdocker/ProjectsController.cpp
+msgid ""
+"Your work is kept on this computer and will be sent the next time you "
+"synchronize."
+msgstr ""
+"O seu trabalho fica guardado neste computador e será enviado na próxima vez "
+"que você sincronizar."
 
 #: plugins/dockers/projectsdocker/ProjectsDock.cpp
 msgid "Conflict resolved"
@@ -212,7 +220,7 @@ msgstr ""
 "%1 tem trabalho que ainda não foi enviado. Sincronize antes de tirar a pasta "
 "da sua escolha."
 
-#: plugins/dockers/projectsdocker/ProjectsDock.cpp
+#: plugins/dockers/projectsdocker/ProjectsController.cpp
 #, kde-format
 msgid "%1 is editing this file"
 msgstr "%1 está editando este arquivo"
