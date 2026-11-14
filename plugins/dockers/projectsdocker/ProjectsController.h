@@ -126,6 +126,8 @@ private:
     void onRefreshed();
     void onProjectSynchronised(int project);
     void onRunFinished();
+    /// Asks the driver, without the artist, who is signed in to the server kept in the settings.
+    void resumeSession();
     void setAccount(Account account);
     void updateChoices();
     void connectToApplication();

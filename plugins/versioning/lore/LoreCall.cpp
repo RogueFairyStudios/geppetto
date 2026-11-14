@@ -129,6 +129,10 @@ LoreEvent convert(const lore_event_t *e)
         f.insert(QStringLiteral("id"), fromLore(e->auth_user_info.id));
         f.insert(QStringLiteral("name"), fromLore(e->auth_user_info.name));
         break;
+    case LORE_EVENT_AUTH_USER_TOKEN:
+        f.insert(QStringLiteral("id"), fromLore(e->auth_user_token.id));
+        f.insert(QStringLiteral("sessionValid"), e->auth_user_token.session_valid != 0);
+        break;
     case LORE_EVENT_REPOSITORY_CREATE:
         f.insert(QStringLiteral("id"), hex(e->repository_create.id));
         f.insert(QStringLiteral("name"), fromLore(e->repository_create.name));

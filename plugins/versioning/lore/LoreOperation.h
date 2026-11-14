@@ -14,6 +14,7 @@
 #include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QUrl>
 #include <QVector>
 
 #include <KisVersioningJob.h>
@@ -176,6 +177,10 @@ QString loreRelativePath(const QString &path);
 
 /// A server address without trailing '/', as the library takes it.
 QString loreServerKey(const QString &serverAddress);
+
+/// True for an address that signing in may open in the browser: https, or http to this computer
+/// (localhost or a loopback address). The address comes from the server.
+bool loreSignInAddressIsSafe(const QUrl &url);
 
 /// The address of a project on its server, as the library takes it.
 QString loreRepositoryUrl(const KisVersioning::ProjectInfo &project);

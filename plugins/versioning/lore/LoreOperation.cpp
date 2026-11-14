@@ -89,6 +89,37 @@ QString loreServerKey(const QString &serverAddress)
     return server;
 }
 
+bool loreSignInAddressIsSafe(const QUrl &url)
+{
+    if (!url.isValid() || url.host().isEmpty()) {
+        return false;
+    }
+    const QString scheme = url.scheme().toLower();
+    if (scheme == QLatin1String("https")) {
+        return true;
+    }
+    if (scheme != QLatin1String("http")) {
+        return false;
+    }
+    const QString host = url.host().toLower();
+    if (host == QLatin1String("localhost") || host == QLatin1String("::1")) {
+        return true;
+    }
+    // 127.0.0.0/8, written as four numbers.
+    const QStringList parts = host.split(QLatin1Char('.'));
+    if (parts.size() != 4 || parts.first() != QLatin1String("127")) {
+        return false;
+    }
+    for (const QString &part : parts) {
+        bool number = false;
+        const int value = part.toInt(&number);
+        if (!number || value < 0 || value > 255) {
+            return false;
+        }
+    }
+    return true;
+}
+
 QString loreRepositoryUrl(const KisVersioning::ProjectInfo &project)
 {
     return loreServerKey(project.serverAddress) + QLatin1Char('/') + project.name;

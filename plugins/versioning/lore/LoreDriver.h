@@ -36,6 +36,11 @@ public:
 
     KisVersioningJob *signIn(const QString &serverAddress) override;
     KisVersioningJob *signOut() override;
+    /// The library's stored session for the server, read on this computer; failing that, a server
+    /// that lists its projects without a session has no authentication, and the system user is who
+    /// this is. NotSignedIn when the server wants a session and none is stored; Offline when the
+    /// server cannot tell.
+    KisVersioningJob *resumeSession(const QString &serverAddress) override;
     KisVersioningJob *listProjects(const QString &serverAddress) override;
     KisVersioningJob *listFolders(const KisVersioning::ProjectInfo &project) override;
     KisVersioningJob *downloadProject(const KisVersioning::ProjectInfo &project,

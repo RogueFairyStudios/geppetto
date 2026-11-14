@@ -38,6 +38,8 @@ private Q_SLOTS:
     void testSessionKeepsBothVersionsOfALineMergedFile();
     void testListsProjectsAndFoldersWithoutDownloading();
     void testSignInWithoutAuthenticationUsesTheSystemUser();
+    void testSessionIsResumedWithoutTheArtist();
+    void testOnlySafeSignInAddressesAreOpened();
     void testResolveMineKeepsMyBytes_data();
     void testResolveMineKeepsMyBytes();
     void testUnsettledDivergenceIsReportedAgain_data();

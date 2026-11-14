@@ -54,6 +54,12 @@ public:
     /// When set, every call also appends "driver:<name> <args>" to @p log, so a test can order driver and host calls.
     void setSharedLog(QStringList *log);
     void setSignInError(KisVersioningJob::Error error, const QString &text = QString());
+    /// The label a sign-in reports while it runs, as a driver shows the code the artist must confirm.
+    void setSignInProgress(const QString &label);
+    /// What resumeSession() finds: by default whoever currentUser() gives. A successful one makes
+    /// @p user the current user.
+    void setResumedUser(const QString &user);
+    void setResumeSessionError(KisVersioningJob::Error error, const QString &text = QString());
     /// What listProjects() returns; by default no project.
     void setProjects(const QVector<KisVersioning::ProjectInfo> &projects);
     void setListProjectsError(KisVersioningJob::Error error, const QString &text = QString());
@@ -85,6 +91,7 @@ public:
 
     KisVersioningJob *signIn(const QString &serverAddress) override;
     KisVersioningJob *signOut() override;
+    KisVersioningJob *resumeSession(const QString &serverAddress) override;
     KisVersioningJob *listProjects(const QString &serverAddress) override;
     KisVersioningJob *listFolders(const KisVersioning::ProjectInfo &project) override;
     KisVersioningJob *downloadProject(const KisVersioning::ProjectInfo &project,
@@ -119,6 +126,10 @@ private:
     Outcome m_announce;
     Outcome m_resolve;
     Outcome m_signIn;
+    QString m_signInProgress;
+    Outcome m_resume;
+    bool m_resumeScripted {false};
+    QString m_resumedUser;
     Outcome m_listProjects;
     Outcome m_download;
     Outcome m_setFolders;

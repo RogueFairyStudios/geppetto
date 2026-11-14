@@ -289,6 +289,23 @@ msgid "Finish signing in in the browser."
 msgstr "Termine de entrar no navegador."
 
 #: plugins/versioning/lore/LoreDriver.cpp
+#, kde-format
+msgid "Finish signing in in the browser. The code to confirm is %1."
+msgstr "Termine de entrar no navegador. O código a confirmar é %1."
+
+#: plugins/versioning/lore/LoreDriver.cpp
+msgid ""
+"The server asked to open an address that is not safe, so signing in was "
+"stopped."
+msgstr ""
+"O servidor pediu para abrir um endereço que não é seguro; por isso a entrada "
+"foi interrompida."
+
+#: plugins/versioning/lore/LoreDriver.cpp
+msgid "Could not find out who is signed in."
+msgstr "Não foi possível saber quem está com sessão ativa."
+
+#: plugins/versioning/lore/LoreDriver.cpp
 msgid "Could not sign out."
 msgstr "Não foi possível sair."
 

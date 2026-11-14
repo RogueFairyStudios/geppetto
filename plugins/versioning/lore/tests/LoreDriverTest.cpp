@@ -11,6 +11,7 @@
 #include <QFile>
 #include <QSignalSpy>
 #include <QTimer>
+#include <QUrl>
 
 #include <KisVersioningConflictMarkers.h>
 #include <KisVersioningDriverRegistry.h>
@@ -386,6 +387,46 @@ void LoreDriverTest::testSignInWithoutAuthenticationUsesTheSystemUser()
     const Outcome nowhere = run(driver.signIn(QString()));
     QVERIFY(nowhere.done);
     QCOMPARE(nowhere.error, KisVersioningJob::Failed);
+}
+
+void LoreDriverTest::testSessionIsResumedWithoutTheArtist()
+{
+    REQUIRE_BACKEND();
+    // The test server has no authentication: the session is the system user's, found with no
+    // browser and no sign-in of the artist.
+    LoreDriver driver;
+    QVERIFY(driver.currentUser().isEmpty());
+    const Outcome resumed = run(driver.resumeSession(server()));
+    VERIFY_OK(resumed);
+    QVERIFY(!resumed.result.toString().isEmpty());
+    QCOMPARE(driver.currentUser(), resumed.result.toString());
+
+    // With no network nobody can be told: the driver says so, and does not claim anyone.
+    LoreDriver offline;
+    offline.setOfflineForTesting(true);
+    const Outcome unknown = run(offline.resumeSession(server()));
+    QVERIFY2(unknown.done, "the job did not finish in time");
+    QCOMPARE(unknown.error, KisVersioningJob::Offline);
+    QVERIFY(offline.currentUser().isEmpty());
+}
+
+void LoreDriverTest::testOnlySafeSignInAddressesAreOpened()
+{
+    QVERIFY(loreSignInAddressIsSafe(QUrl(QStringLiteral("https://login.example/device?code=1"))));
+    QVERIFY(loreSignInAddressIsSafe(QUrl(QStringLiteral("http://localhost:8080/callback"))));
+    QVERIFY(loreSignInAddressIsSafe(QUrl(QStringLiteral("http://LOCALHOST/"))));
+    QVERIFY(loreSignInAddressIsSafe(QUrl(QStringLiteral("http://127.0.0.1:9000/"))));
+    QVERIFY(loreSignInAddressIsSafe(QUrl(QStringLiteral("http://127.5.6.7/"))));
+    QVERIFY(loreSignInAddressIsSafe(QUrl(QStringLiteral("http://[::1]:9000/"))));
+
+    QVERIFY(!loreSignInAddressIsSafe(QUrl(QStringLiteral("http://login.example/"))));
+    QVERIFY(!loreSignInAddressIsSafe(QUrl(QStringLiteral("http://127.example/"))));
+    QVERIFY(!loreSignInAddressIsSafe(QUrl(QStringLiteral("http://localhost.example/"))));
+    QVERIFY(!loreSignInAddressIsSafe(QUrl(QStringLiteral("file:///C:/Windows/System32/calc.exe"))));
+    QVERIFY(!loreSignInAddressIsSafe(QUrl(QStringLiteral("javascript:alert(1)"))));
+    QVERIFY(!loreSignInAddressIsSafe(QUrl(QStringLiteral("ftp://login.example/"))));
+    QVERIFY(!loreSignInAddressIsSafe(QUrl(QStringLiteral("https:///nohost"))));
+    QVERIFY(!loreSignInAddressIsSafe(QUrl()));
 }
 
 void LoreDriverTest::testResolveMineKeepsMyBytes_data()

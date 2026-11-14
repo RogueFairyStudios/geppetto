@@ -419,4 +419,118 @@ void ProjectsControllerTest::testSignedOutStopsRunsAndChoices()
     QCOMPARE(f.settings.serverAddress(), QStringLiteral("server.example"));
 }
 
+void ProjectsControllerTest::testWhoIsSignedInIsAskedAtStart()
+{
+    Fixture f;
+    f.addGame();
+    f.driver.setCapabilities(SignIn | RemoteProjects);
+    f.settings.setServerAddress(QStringLiteral("server.example"));
+    // The application starts: the driver does not know anyone yet, its backend kept a session.
+    f.driver.setResumedUser(QStringLiteral("Ana"));
+    ProjectsController &controller = f.make();
+    QCOMPARE(controller.account(), ProjectsController::Account::SignedOut);
+    QVERIFY(f.startAndWait());
+
+    QTRY_COMPARE(controller.account(), ProjectsController::Account::SignedIn);
+    QCOMPARE(controller.user(), QStringLiteral("Ana"));
+    QCOMPARE(f.driver.callsNamed(QStringLiteral("resumeSession")).first().args, QStringList{QStringLiteral("server.example")});
+    // Asked without the artist: no sign-in, no browser.
+    QCOMPARE(f.driver.callCount(QStringLiteral("signIn")), 0);
+    QVERIFY(controller.canSynchronise());
+    QVERIFY(controller.canChooseFolders());
+
+    // While the answer is awaited, nothing starts.
+    Fixture g;
+    g.addGame();
+    g.driver.setCapabilities(SignIn | RemoteProjects);
+    g.settings.setServerAddress(QStringLiteral("server.example"));
+    g.driver.setHeld(QStringLiteral("resumeSession"), true);
+    ProjectsController &waiting = g.make();
+    QVERIFY(g.startAndWait());
+    QCOMPARE(waiting.account(), ProjectsController::Account::Checking);
+    QVERIFY(!waiting.canSynchronise());
+    QVERIFY(!waiting.canChooseFolders());
+
+    // A driver without sign-in is never asked.
+    Fixture h;
+    h.addGame();
+    h.settings.setServerAddress(QStringLiteral("server.example"));
+    ProjectsController &none = h.make();
+    QVERIFY(h.startAndWait());
+    QCOMPARE(none.account(), ProjectsController::Account::NotNeeded);
+    QCOMPARE(h.driver.callCount(QStringLiteral("resumeSession")), 0);
+}
+
+void ProjectsControllerTest::testNobodySignedInStopsRunsAndChoices()
+{
+    Fixture f;
+    f.addGame();
+    f.driver.setCapabilities(SignIn | RemoteProjects);
+    f.settings.setServerAddress(QStringLiteral("server.example"));
+    f.driver.setResumeSessionError(KisVersioningJob::NotSignedIn, QStringLiteral("nobody"));
+    ProjectsController &controller = f.make();
+    QVERIFY(f.startAndWait());
+    QTRY_COMPARE(controller.account(), ProjectsController::Account::SignedOut);
+
+    QVERIFY(!controller.canSynchronise());
+    QVERIFY(!controller.canChooseFolders());
+    controller.synchronise(QString());
+    QTest::qWait(50);
+    QCOMPARE(f.driver.callCount(QStringLiteral("synchronise")), 0);
+    QVERIFY(!controller.isSynchronising());
+
+    // No server known yet: nobody can be signed in, and nothing is asked.
+    Fixture g;
+    g.addGame();
+    g.driver.setCapabilities(SignIn | RemoteProjects);
+    ProjectsController &fresh = g.make();
+    QVERIFY(g.startAndWait());
+    QCOMPARE(fresh.account(), ProjectsController::Account::SignedOut);
+    QCOMPARE(g.driver.callCount(QStringLiteral("resumeSession")), 0);
+}
+
+void ProjectsControllerTest::testNoNetworkAtStartStillAllowsWork()
+{
+    Fixture f;
+    f.addGame();
+    f.driver.setCapabilities(SignIn | RemoteProjects);
+    f.settings.setServerAddress(QStringLiteral("server.example"));
+    f.driver.setResumeSessionError(KisVersioningJob::Offline, QStringLiteral("no network"));
+    ProjectsController &controller = f.make();
+    QVERIFY(f.startAndWait());
+    QTRY_COMPARE(controller.account(), ProjectsController::Account::Unknown);
+
+    // The work can still be kept on this computer.
+    QVERIFY(controller.canSynchronise());
+
+    // The next reading of the list asks again; this time the session is found.
+    f.driver.setResumedUser(QStringLiteral("Ana"));
+    controller.requestRefresh();
+    QTRY_COMPARE(controller.account(), ProjectsController::Account::SignedIn);
+    QCOMPARE(controller.user(), QStringLiteral("Ana"));
+}
+
+void ProjectsControllerTest::testSignInShowsWhatItAsks()
+{
+    Fixture f;
+    f.addGame();
+    f.driver.setCapabilities(SignIn | RemoteProjects);
+    f.driver.setSignInProgress(QStringLiteral("Finish signing in in the browser. The code to confirm is WDJB-MJHT."));
+    f.driver.setHeld(QStringLiteral("signIn"), true);
+    ProjectsController &controller = f.make();
+    QVERIFY(f.startAndWait());
+
+    controller.signIn(QStringLiteral("server.example"));
+    QVERIFY(controller.isSigningIn());
+    QTRY_COMPARE(controller.signInProgress(),
+                 QStringLiteral("Finish signing in in the browser. The code to confirm is WDJB-MJHT."));
+
+    QSignalSpy refreshed(controller.model(), &ProjectsModel::refreshed);
+    f.driver.releaseHeld(QStringLiteral("signIn"));
+    QVERIFY(refreshed.wait(5000));
+    QVERIFY(!controller.isSigningIn());
+    QVERIFY(controller.signInProgress().isEmpty());
+    QCOMPARE(controller.account(), ProjectsController::Account::SignedIn);
+}
+
 SIMPLE_TEST_MAIN(ProjectsControllerTest)

@@ -20,6 +20,10 @@ private Q_SLOTS:
     void testOneRunAtATime();
     void testMessagesAfterARun();
     void testSignedOutStopsRunsAndChoices();
+    void testWhoIsSignedInIsAskedAtStart();
+    void testNobodySignedInStopsRunsAndChoices();
+    void testNoNetworkAtStartStillAllowsWork();
+    void testSignInShowsWhatItAsks();
 };
 
 #endif // PROJECTSCONTROLLERTEST_H

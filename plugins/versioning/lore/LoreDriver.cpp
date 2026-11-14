@@ -226,8 +226,21 @@ KisVersioningJob *LoreDriver::signIn(const QString &serverAddress)
         },
         [op, name](const LoreEvent &event) {
             if (event.tag == LORE_EVENT_AUTH_URL) {
-                op->reportProgress(0, 0, i18n("Finish signing in in the browser."));
-                QDesktopServices::openUrl(QUrl(event.fields.value(QStringLiteral("url")).toString()));
+                // The address comes from the server: only a web page is opened, never a program or
+                // a file, and plain http only on this computer.
+                const QUrl url(event.fields.value(QStringLiteral("url")).toString());
+                if (!loreSignInAddressIsSafe(url)) {
+                    qWarning("Lore: signing in asked to open an address that is not safe: %s",
+                             qUtf8Printable(url.toString()));
+                    op->fail(KisVersioningJob::Failed,
+                             i18n("The server asked to open an address that is not safe, so signing in was stopped."));
+                    return;
+                }
+                const QString code = event.fields.value(QStringLiteral("userCode")).toString();
+                op->reportProgress(0, 0, code.isEmpty()
+                                             ? i18n("Finish signing in in the browser.")
+                                             : i18n("Finish signing in in the browser. The code to confirm is %1.", code));
+                QDesktopServices::openUrl(url);
             } else if (event.tag == LORE_EVENT_AUTH_USER_INFO) {
                 const QString user = event.fields.value(QStringLiteral("name")).toString();
                 *name = user.isEmpty() ? event.fields.value(QStringLiteral("id")).toString() : user;
@@ -254,6 +267,74 @@ KisVersioningJob *LoreDriver::signIn(const QString &serverAddress)
                 return;
             }
             op->failFromLore("sign in", status, rawText, failText);
+        });
+    return job;
+}
+
+KisVersioningJob *LoreDriver::resumeSession(const QString &serverAddress)
+{
+    auto *job = new KisVersioningJob();
+    auto *op = new LoreOperation(job, settings(), QString());
+    const QString address = loreServerKey(serverAddress);
+    const QString failText = i18n("Could not find out who is signed in.");
+    if (address.isEmpty()) {
+        op->fail(KisVersioningJob::NotSignedIn, LoreText::forProblem(LoreProblem::NotSignedIn, failText));
+        return job;
+    }
+    LoreGlobals g = op->globals();
+    g.repositoryPath.clear();
+    g.workingDirectory.clear();
+    g.identity.clear();
+    const QByteArray endpoint = address.toUtf8();
+    auto valid = std::make_shared<QSet<QString>>();
+    auto found = std::make_shared<QString>();
+    QPointer<LoreDriver> self(this);
+    // First the session the library keeps on this computer: read here, with no browser.
+    op->run(g,
+        [endpoint](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
+            lore_auth_local_user_info_args_t args;
+            std::memset(&args, 0, sizeof args);
+            args.auth_endpoint = toLore(endpoint);
+            lore_auth_local_user_info_async(globals, &args, callback);
+        },
+        [valid, found](const LoreEvent &event) {
+            // A stored identity comes with its token first: only one whose session is still valid counts.
+            const QString id = event.fields.value(QStringLiteral("id")).toString();
+            if (event.tag == LORE_EVENT_AUTH_USER_TOKEN && event.fields.value(QStringLiteral("sessionValid")).toBool()) {
+                valid->insert(id);
+            } else if (event.tag == LORE_EVENT_AUTH_USER_INFO && found->isEmpty() && valid->contains(id)) {
+                const QString user = event.fields.value(QStringLiteral("name")).toString();
+                *found = user.isEmpty() ? id : user;
+            }
+        },
+        [op, self, found, address, failText](int status, const QString &rawText) {
+            if (status != 0) {
+                qWarning("Lore: reading the stored session failed (status %d): %s", status, qUtf8Printable(rawText));
+            }
+            if (!found->isEmpty()) {
+                if (self) {
+                    self->m_user = *found;
+                    self->m_identity.clear();
+                }
+                op->finish(QVariant(*found));
+                return;
+            }
+            // None kept. A server that lists its projects to nobody in particular has no
+            // authentication: the system user is who this is, as signIn() finds.
+            op->checkServer(address,
+                [op, self, failText](bool reachable, int checkStatus, const QString &checkText) {
+                    if (!reachable) {
+                        op->endWithoutServer(checkStatus, checkText, failText);
+                        return;
+                    }
+                    const QString user = KUser().loginName();
+                    if (self) {
+                        self->m_user = user;
+                        self->m_identity = user;
+                    }
+                    op->finish(QVariant(user));
+                },
+                true);
         });
     return job;
 }

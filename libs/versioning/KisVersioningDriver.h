@@ -53,6 +53,13 @@ public:
 
     virtual KisVersioningJob *signIn(const QString &serverAddress) = 0;
     virtual KisVersioningJob *signOut() = 0;
+    /**
+     * Finds out, without asking the artist and without opening a browser, who is signed in to
+     * @p serverAddress: the session the backend kept from an earlier sign-in. Ends with the name
+     * (QString), which currentUser() then gives too, or with NotSignedIn when nobody is. This
+     * implementation ends at once with currentUser().
+     */
+    virtual KisVersioningJob *resumeSession(const QString &serverAddress);
     virtual KisVersioningJob *listProjects(const QString &serverAddress) = 0;             // QVector<ProjectInfo>
     virtual KisVersioningJob *listFolders(const KisVersioning::ProjectInfo &project) = 0; // QStringList
     virtual KisVersioningJob *downloadProject(const KisVersioning::ProjectInfo &project,

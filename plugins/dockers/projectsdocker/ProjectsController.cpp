@@ -127,7 +127,35 @@ ProjectsController::~ProjectsController()
 
 void ProjectsController::start()
 {
+    // The driver forgets who signed in when the application ends; its backend may not.
+    if (m_driver->capabilities().testFlag(SignIn) && !m_settings->serverAddress().isEmpty()) {
+        resumeSession();
+    }
     m_model->refresh();
+}
+
+void ProjectsController::resumeSession()
+{
+    setAccount(Account::Checking);
+    KisVersioningJob *job = m_driver->resumeSession(m_settings->serverAddress());
+    // The job deletes itself after finished(): its answer is read in the slot.
+    connect(job, &KisVersioningJob::finished, this, [this](KisVersioningJob *finished) {
+        if (m_account != Account::Checking) {
+            return; // a sign-in of the artist answered first
+        }
+        switch (finished->error()) {
+        case KisVersioningJob::NoError:
+            setAccount(Account::SignedIn);
+            break;
+        case KisVersioningJob::NotSignedIn:
+            setAccount(Account::SignedOut);
+            break;
+        default:
+            // No network, or no answer: work goes on here; the next reading of the list asks again.
+            setAccount(Account::Unknown);
+            break;
+        }
+    });
 }
 
 KisVersioningDriver *ProjectsController::driver() const
@@ -262,6 +290,8 @@ void ProjectsController::onRefreshed()
         // The session expired: back to the signed-out state.
         setAccount(Account::SignedOut);
         m_messages = QStringList{i18n("Sign in again to send your work")};
+    } else if (m_account == Account::Unknown && !m_signingIn) {
+        resumeSession();
     }
     if (m_runRequested) {
         startRun();
@@ -346,6 +376,9 @@ void ProjectsController::signIn(const QString &serverAddress)
         m_signInProgress.clear();
         if (finished->error() != KisVersioningJob::NoError) {
             showMessages({finished->errorText()});
+            if (m_account == Account::Checking) {
+                setAccount(Account::SignedOut);
+            }
             return;
         }
         m_settings->setServerAddress(address);

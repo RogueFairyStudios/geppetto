@@ -83,6 +83,24 @@ void KisVersioningFakeDriver::setSignInError(KisVersioningJob::Error error, cons
     m_signIn = failure(error, text);
 }
 
+void KisVersioningFakeDriver::setSignInProgress(const QString &label)
+{
+    m_signInProgress = label;
+}
+
+void KisVersioningFakeDriver::setResumedUser(const QString &user)
+{
+    m_resume = Outcome();
+    m_resumeScripted = true;
+    m_resumedUser = user;
+}
+
+void KisVersioningFakeDriver::setResumeSessionError(KisVersioningJob::Error error, const QString &text)
+{
+    m_resume = failure(error, text);
+    m_resumeScripted = true;
+}
+
 void KisVersioningFakeDriver::setProjects(const QVector<ProjectInfo> &projects)
 {
     m_listProjects = Outcome();
@@ -225,13 +243,30 @@ void KisVersioningFakeDriver::setCurrentUserHook(const std::function<void()> &ho
 KisVersioningJob *KisVersioningFakeDriver::signIn(const QString &serverAddress)
 {
     record(QStringLiteral("signIn"), {serverAddress});
-    return makeJob(QStringLiteral("signIn"), m_signIn);
+    KisVersioningJob *job = makeJob(QStringLiteral("signIn"), m_signIn);
+    if (!m_signInProgress.isEmpty()) {
+        job->reportProgress(0, 0, m_signInProgress);
+    }
+    return job;
 }
 
 KisVersioningJob *KisVersioningFakeDriver::signOut()
 {
     record(QStringLiteral("signOut"), {});
     return makeJob(QStringLiteral("signOut"), Outcome());
+}
+
+KisVersioningJob *KisVersioningFakeDriver::resumeSession(const QString &serverAddress)
+{
+    record(QStringLiteral("resumeSession"), {serverAddress});
+    Outcome outcome = m_resume;
+    if (outcome.error == KisVersioningJob::NoError) {
+        if (m_resumeScripted) {
+            m_user = m_resumedUser;
+        }
+        outcome.result = QVariant(m_user);
+    }
+    return makeJob(QStringLiteral("resumeSession"), outcome);
 }
 
 KisVersioningJob *KisVersioningFakeDriver::listProjects(const QString &serverAddress)

@@ -10,4 +10,11 @@ KisVersioningDriver::KisVersioningDriver(QObject *parent)
 
 KisVersioningDriver::~KisVersioningDriver() = default;
 
+KisVersioningJob *KisVersioningDriver::resumeSession(const QString &)
+{
+    auto *job = new KisVersioningJob(this);
+    job->finish(QVariant(currentUser()));
+    return job;
+}
+
 KisVersioningDriverFactory::~KisVersioningDriverFactory() = default;
