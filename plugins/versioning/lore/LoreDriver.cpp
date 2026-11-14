@@ -653,6 +653,11 @@ KisVersioningJob *LoreDriver::status(const QString &localPath)
                 return a.path < b.path;
             });
             if (status.remoteAvailable) {
+                const bool known = std::any_of(status.remoteRevision.begin(), status.remoteRevision.end(),
+                                               [](QChar c) { return c != QLatin1Char('0'); });
+                if (known) {
+                    result.serverVersion = status.remoteRevision;
+                }
                 if (status.remoteAhead) {
                     result.incoming = int(std::max<qint64>(1, qint64(status.remoteNumber) - qint64(status.number)));
                 }

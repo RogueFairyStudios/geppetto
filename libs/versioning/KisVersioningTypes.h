@@ -21,7 +21,8 @@ Q_DECLARE_FLAGS(Capabilities, Capability)
 
 struct ProjectInfo   { QString id; QString name; QString serverAddress; };
 struct FileStatus    { QString path; FileState state = FileState::Unchanged; };
-struct ProjectStatus { QVector<FileStatus> files; int incoming = 0; int pendingUpload = 0; };
+struct ProjectStatus { QVector<FileStatus> files; int incoming = 0; int pendingUpload = 0;
+                       QString serverVersion; };   ///< the latest version on the server; empty when not known
 struct Divergence    { QString path; DivergenceKind kind = DivergenceKind::BothModified; QString otherAuthor; };
 struct SyncResult    { QVector<Divergence> divergences; QStringList received; QStringList sent;
                        bool pendingUpload = false; bool serverChanged = false; };

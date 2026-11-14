@@ -875,6 +875,44 @@ void ProjectsModelTest::testDestroyedWhileRefreshingIsSafe()
     }
 }
 
+void ProjectsModelTest::testFoldersAreListedAgainOnlyForANewVersion()
+{
+    Fixture f;
+    addRemoteGame(f);
+    ProjectInfo other{QStringLiteral("p2"), QStringLiteral("Space"), QString()};
+    f.driver.setProjects({ProjectInfo{QStringLiteral("game"), QStringLiteral("game"), QString()}, other});
+    f.driver.setProjectFolders(QStringLiteral("p2"), {QStringLiteral("ui")});
+    ProjectStatus status;
+    status.serverVersion = QStringLiteral("v1");
+    f.driver.setStatus(status);
+    ProjectsModel model(&f.driver, &f.settings);
+    auto listed = [&f](const QString &id) {
+        int count = 0;
+        for (const KisVersioningFakeDriver::Call &call : f.driver.callsNamed(QStringLiteral("listFolders"))) {
+            count += call.args.first() == id ? 1 : 0;
+        }
+        return count;
+    };
+    QVERIFY(refreshAndWait(model));
+    QCOMPARE(listed(QStringLiteral("game")), 1);
+    QCOMPARE(listed(QStringLiteral("p2")), 1);
+
+    // Read again with the same version on the server: the folders are the ones already listed.
+    QVERIFY(refreshAndWait(model));
+    QVERIFY(refreshAndWait(model));
+    QCOMPARE(listed(QStringLiteral("game")), 1);
+    QCOMPARE(listed(QStringLiteral("p2")), 1);
+    QCOMPARE(findPath(model, f.path(QStringLiteral("game/art"))).data(ProjectsModel::CheckedFolderRole).toBool(), true);
+
+    // A new version on the server may bring new folders: listed again.
+    status.serverVersion = QStringLiteral("v2");
+    f.driver.setStatus(status);
+    f.driver.setProjectFolders(QStringLiteral("game"), {QStringLiteral("art"), QStringLiteral("novos"), QStringLiteral("ui")});
+    QVERIFY(refreshAndWait(model));
+    QCOMPARE(listed(QStringLiteral("game")), 2);
+    QVERIFY(findPath(model, f.path(QStringLiteral("game/novos"))).isValid());
+}
+
 void ProjectsModelTest::testFileOutsideTheChoiceIsShownAndCounted()
 {
     Fixture f;

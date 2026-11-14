@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <QAbstractItemModel>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QList>
 #include <QSet>
@@ -44,7 +45,9 @@ class ProjectsDocuments;
  *
  * Every refresh reads the disk on a worker thread and asks the driver without
  * waiting; the model changes in one step when all the answers are in. It is
- * safe to destroy the model while that is going on.
+ * safe to destroy the model while that is going on. The folders of a
+ * downloaded project are listed again only when its version on the server
+ * changed; those of a project not downloaded, at most every few minutes.
  */
 class ProjectsModel : public QAbstractItemModel
 {
@@ -103,6 +106,8 @@ private:
     void askWhoIsEditing(const std::shared_ptr<Refresh> &refresh, int project);
     void askRemoteProjects(const std::shared_ptr<Refresh> &refresh);
     void askFolders(const std::shared_ptr<Refresh> &refresh, int project);
+    /// Lists the project's folders, or takes the ones listed for the same version of the server.
+    void settleFolders(const std::shared_ptr<Refresh> &refresh, int project);
     void stepDone(const std::shared_ptr<Refresh> &refresh);
     void apply(const Refresh &refresh);
     std::unique_ptr<Node> buildProject(int project) const;
@@ -148,6 +153,13 @@ private:
     QSet<QString> m_busyProjects;
     QHash<QString, QList<Choice>> m_waitingChoices;   ///< choices made while their project was busy
     QHash<QString, QString> m_downloadTargets;        ///< project id to the folder a download is filling
+    /// The folders last listed for a project, by id, with the version of the server they belong to.
+    struct ListedFolders {
+        QString serverVersion;
+        QStringList folders;
+        QElapsedTimer age;
+    };
+    QHash<QString, ListedFolders> m_listedFolders;
 };
 
 #endif // PROJECTSMODEL_H

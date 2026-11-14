@@ -370,4 +370,65 @@ void LocalFolderDriverTest::testBackupsWithTheConfiguredSuffixAreNotSynchronised
     QCOMPARE(sync.result.value<SyncResult>().sent, QStringList{"ui/botao.kra"});
 }
 
+namespace {
+
+bool setModified(const QString &path, const QDateTime &time)
+{
+    QFile file(path);
+    return file.open(QIODevice::ReadWrite) && file.setFileTime(time, QFileDevice::FileModificationTime);
+}
+
+QStringList changedPaths(const QVariant &status)
+{
+    QStringList paths;
+    for (const FileStatus &file : status.value<ProjectStatus>().files) {
+        paths << file.path;
+    }
+    return paths;
+}
+
+} // namespace
+
+void LocalFolderDriverTest::testUnchangedFilesAreNotReadAgain()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    LocalFolderDriver driver;
+    const QString project = dir.filePath("project");
+    QVERIFY(createProject(&driver, project));
+    const QString a = QDir(project).filePath("a.kra");
+    const QDateTime earlier = QDateTime::currentDateTime().addSecs(-60);
+    QVERIFY(writeFile(project, "a.kra", "aaaa"));
+    QVERIFY(setModified(a, earlier));
+    VERIFY_OK(run(driver.synchronise(project, "one")));
+    VERIFY_OK(run(driver.status(project)));
+
+    // Same size, same time: taken as unchanged without reading it, as the size and time say. (The
+    // content was swapped behind the file system's back to show that it is not read.)
+    QVERIFY(writeFile(project, "a.kra", "bbbb"));
+    QVERIFY(setModified(a, earlier));
+    const Outcome same = run(driver.status(project));
+    VERIFY_OK(same);
+    QVERIFY(changedPaths(same.result).isEmpty());
+
+    // Another time: read, and found changed.
+    QVERIFY(setModified(a, earlier.addSecs(1)));
+    const Outcome touched = run(driver.status(project));
+    VERIFY_OK(touched);
+    QCOMPARE(changedPaths(touched.result), QStringList{"a.kra"});
+
+    // A file written moments before it was read is not trusted by its time: a second write within
+    // the same tick of the clock would keep it. It is read every time.
+    const QString b = QDir(project).filePath("b.kra");
+    QVERIFY(writeFile(project, "b.kra", "cccc"));
+    const QDateTime written = QFileInfo(b).lastModified();
+    VERIFY_OK(run(driver.synchronise(project, "two")));
+    VERIFY_OK(run(driver.status(project)));
+    QVERIFY(writeFile(project, "b.kra", "dddd"));
+    QVERIFY(setModified(b, written));
+    const Outcome racy = run(driver.status(project));
+    VERIFY_OK(racy);
+    QVERIFY(changedPaths(racy.result).contains("b.kra"));
+}
+
 SIMPLE_TEST_MAIN(LocalFolderDriverTest)

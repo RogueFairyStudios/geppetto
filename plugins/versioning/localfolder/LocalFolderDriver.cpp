@@ -10,6 +10,7 @@
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QGlobalStatic>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -260,6 +261,91 @@ bool hashFile(const QString &path, const Cancelled &cancelled, QString *hash)
     return true;
 }
 
+const char statCacheFileName[] = "stat-cache.json";
+
+/// Below this age the time of a file is not trusted to tell whether it changed: a second write
+/// within the same tick of the file system's clock (two seconds on some) would keep it.
+const qint64 racyMs = 2000;
+
+/// What was last read of a file: its size and time then, and the hash of its bytes.
+struct StatEntry {
+    qint64 size = 0;
+    qint64 modified = 0;
+    QString sha256;
+};
+using StatCache = QHash<QString, StatEntry>;
+
+/// Only a help: a cache that cannot be read is an empty one.
+StatCache loadStatCache(const QString &root)
+{
+    StatCache cache;
+    QFile file(QDir(storePath(root)).filePath(QString::fromLatin1(statCacheFileName)));
+    if (!file.open(QIODevice::ReadOnly)) {
+        return cache;
+    }
+    const QJsonObject files = QJsonDocument::fromJson(file.readAll()).object().value(QLatin1String("files")).toObject();
+    for (auto it = files.constBegin(); it != files.constEnd(); ++it) {
+        const QJsonObject object = it.value().toObject();
+        StatEntry entry;
+        entry.size = qint64(object.value(QLatin1String("size")).toDouble(-1));
+        entry.modified = qint64(object.value(QLatin1String("modified")).toDouble(-1));
+        entry.sha256 = object.value(QLatin1String("sha256")).toString();
+        if (entry.size >= 0 && entry.modified >= 0 && !entry.sha256.isEmpty()) {
+            cache.insert(it.key(), entry);
+        }
+    }
+    return cache;
+}
+
+void saveStatCache(const QString &root, const StatCache &cache)
+{
+    QJsonObject files;
+    for (auto it = cache.constBegin(); it != cache.constEnd(); ++it) {
+        QJsonObject object;
+        object.insert(QLatin1String("size"), double(it->size));
+        object.insert(QLatin1String("modified"), double(it->modified));
+        object.insert(QLatin1String("sha256"), it->sha256);
+        files.insert(it.key(), object);
+    }
+    QJsonObject top;
+    top.insert(QLatin1String("files"), files);
+    QSaveFile file(QDir(storePath(root)).filePath(QString::fromLatin1(statCacheFileName)));
+    if (QDir().mkpath(storePath(root)) && file.open(QIODevice::WriteOnly)) {
+        file.write(QJsonDocument(top).toJson(QJsonDocument::Compact));
+        file.commit();
+    }
+}
+
+/// The hash of the file at @p path: taken from @p cache when its size and time are the ones
+/// recorded, read otherwise, and then recorded when its time can be trusted.
+bool hashOf(const QDir &directory, const QString &path, StatCache *cache, bool *cacheChanged,
+            const Cancelled &cancelled, QString *hash)
+{
+    const QString absolute = directory.filePath(path);
+    const QFileInfo before(absolute);
+    const qint64 size = before.size();
+    const qint64 modified = before.lastModified().toMSecsSinceEpoch();
+    const auto known = cache->constFind(path);
+    if (known != cache->constEnd() && known->size == size && known->modified == modified) {
+        *hash = known->sha256;
+        return true;
+    }
+    if (!hashFile(absolute, cancelled, hash)) {
+        return false;
+    }
+    // Recorded only when the file did not change while it was read, and is old enough for its
+    // time to show the next change.
+    const QFileInfo after(absolute);
+    if (after.size() == size && after.lastModified().toMSecsSinceEpoch() == modified
+        && QDateTime::currentMSecsSinceEpoch() - modified > racyMs) {
+        cache->insert(path, {size, modified, *hash});
+        *cacheChanged = true;
+    } else if (cache->remove(path) > 0) {
+        *cacheChanged = true;
+    }
+    return true;
+}
+
 /// Copies @p source to @p destination in one pass and hashes what was copied, which is what the
 /// index must record even when the file changes while it is being copied.
 Problem copyAndHash(const QString &source, const QString &destination, const Cancelled &cancelled,
@@ -358,9 +444,12 @@ Outcome doStatus(const QString &root, const QString &backupSuffix)
     QMap<QString, FileState> changes;   // sorted by path
     const QStringList present = workingFiles(root, backupSuffix);
     const QSet<QString> presentSet(present.constBegin(), present.constEnd());
+    // A file whose size and time are those last read is not read again.
+    StatCache cache = loadStatCache(root);
+    bool cacheChanged = false;
     for (const QString &path : present) {
         QString hash;
-        if (!hashFile(directory.filePath(path), []() { return false; }, &hash)) {
+        if (!hashOf(directory, path, &cache, &cacheChanged, []() { return false; }, &hash)) {
             return problem(Problem::CannotRead, path);
         }
         const auto known = snapshot.find(path);
@@ -374,6 +463,17 @@ Outcome doStatus(const QString &root, const QString &backupSuffix)
         if (!presentSet.contains(known.first) && !isNeverSynced(known.first, backupSuffix)) {
             changes.insert(known.first, FileState::Deleted);
         }
+    }
+    for (auto it = cache.begin(); it != cache.end();) {
+        if (presentSet.contains(it.key())) {
+            ++it;
+        } else {
+            it = cache.erase(it);
+            cacheChanged = true;
+        }
+    }
+    if (cacheChanged) {
+        saveStatCache(root, cache);
     }
 
     ProjectStatus status;
@@ -414,13 +514,16 @@ Outcome doSynchronise(const QString &root, const QString &author, const QString 
     const std::map<QString, QString> snapshot = lastSnapshot(versions);
     const QDir directory(root);
 
-    // What changed since the last version.
+    // What changed since the last version. A file whose size and time are those last read is not
+    // read again.
     QStringList changedPaths;
     const QStringList present = workingFiles(root, backupSuffix);
     const QSet<QString> presentSet(present.constBegin(), present.constEnd());
+    StatCache cache = loadStatCache(root);
+    bool cacheChanged = false;
     for (const QString &path : present) {
         QString hash;
-        if (!hashFile(directory.filePath(path), cancelled, &hash)) {
+        if (!hashOf(directory, path, &cache, &cacheChanged, cancelled, &hash)) {
             return cancelled() ? problem(Problem::Cancelled) : problem(Problem::CannotRead, path);
         }
         const auto known = snapshot.find(path);
@@ -433,6 +536,9 @@ Outcome doSynchronise(const QString &root, const QString &author, const QString 
         if (!presentSet.contains(known.first) && !isNeverSynced(known.first, backupSuffix)) {
             deletedPaths.append(known.first);
         }
+    }
+    if (cacheChanged) {
+        saveStatCache(root, cache);
     }
 
     SyncResult result;

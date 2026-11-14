@@ -25,6 +25,7 @@ private Q_SLOTS:
     void testNobodySignedInStopsRunsAndChoices();
     void testNoNetworkAtStartStillAllowsWork();
     void testSignInShowsWhatItAsks();
+    void testListIsReadAgainWhileAPanelShows();
 };
 
 #endif // PROJECTSCONTROLLERTEST_H

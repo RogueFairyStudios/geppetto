@@ -556,4 +556,30 @@ void ProjectsControllerTest::testSignInShowsWhatItAsks()
     QCOMPARE(controller.account(), ProjectsController::Account::SignedIn);
 }
 
+void ProjectsControllerTest::testListIsReadAgainWhileAPanelShows()
+{
+    Fixture f;
+    f.addGame();
+    f.driver.setCapabilities(Presence);
+    ProjectsController &controller = f.make();
+    controller.setSlowRefreshInterval(50);
+    QVERIFY(f.startAndWait());
+    QTest::qWait(200);
+    const int hidden = f.driver.callCount(QStringLiteral("status"));
+    QCOMPARE(hidden, 1);
+
+    // Shown: the state and who is editing are read again from time to time, with no save to start it.
+    QObject panel;
+    controller.setPanelVisible(&panel, true);
+    QTRY_VERIFY(f.driver.callCount(QStringLiteral("status")) >= hidden + 2);
+    QVERIFY(f.driver.callCount(QStringLiteral("whoIsEditing")) >= 2);
+
+    // Hidden again: it stops.
+    controller.setPanelVisible(&panel, false);
+    QTest::qWait(100);
+    const int stopped = f.driver.callCount(QStringLiteral("status"));
+    QTest::qWait(300);
+    QCOMPARE(f.driver.callCount(QStringLiteral("status")), stopped);
+}
+
 SIMPLE_TEST_MAIN(ProjectsControllerTest)

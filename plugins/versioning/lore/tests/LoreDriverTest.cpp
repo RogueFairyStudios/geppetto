@@ -850,6 +850,7 @@ void LoreDriverTest::testSynchroniseAndStatusWithoutNetwork()
     QVERIFY(state.result.value<ProjectStatus>().files.isEmpty());
     QCOMPARE(state.result.value<ProjectStatus>().incoming, 0);
     QCOMPARE(state.result.value<ProjectStatus>().pendingUpload, 1);
+    QVERIFY(state.result.value<ProjectStatus>().serverVersion.isEmpty());
 
     // The application restarts, still with no network: the driver remembers nothing, the project
     // does. Its state and a synchronisation with nothing new both say that work is waiting.
@@ -870,6 +871,9 @@ void LoreDriverTest::testSynchroniseAndStatusWithoutNetwork()
     const Outcome online = run(driver.status(project));
     VERIFY_OK(online);
     QVERIFY(online.result.value<ProjectStatus>().pendingUpload >= 1);
+    // The server's version is known again; it changes when the version made here reaches it.
+    const QString before = online.result.value<ProjectStatus>().serverVersion;
+    QVERIFY(!before.isEmpty());
     const Outcome sent = run(driver.synchronise(project, QString()));
     VERIFY_OK(sent);
     QVERIFY(!sent.result.value<SyncResult>().pendingUpload);
@@ -877,6 +881,7 @@ void LoreDriverTest::testSynchroniseAndStatusWithoutNetwork()
     const Outcome after = run(driver.status(project));
     VERIFY_OK(after);
     QCOMPARE(after.result.value<ProjectStatus>().pendingUpload, 0);
+    QVERIFY(after.result.value<ProjectStatus>().serverVersion != before);
 
     // Sent, it is no longer counted with no network either.
     driver.setOfflineForTesting(true);

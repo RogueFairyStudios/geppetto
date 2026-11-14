@@ -32,6 +32,7 @@ private Q_SLOTS:
     void testDefaultNotesAreStoredNotTranslatedOnRead();
     void testWorkerDoesNotNeedTheJobThreadToProduceDefaultNotes();
     void testBackupsWithTheConfiguredSuffixAreNotSynchronised();
+    void testUnchangedFilesAreNotReadAgain();
 };
 
 #endif // LOCALFOLDERDRIVERTEST_H

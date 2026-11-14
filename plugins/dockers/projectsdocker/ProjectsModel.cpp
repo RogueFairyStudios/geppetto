@@ -178,6 +178,9 @@ struct ProjectsModel::Project {
     ProjectStatus status;
     QVector<EditingInfo> editing;
     QStringList remoteFolders;
+    bool statusKnown = false;     ///< the driver answered (or will never be asked)
+    bool foldersWanted = false;   ///< the folders wait for the status, which says the server's version
+    QString listedVersion;        ///< the server's version when the folders were asked for
 };
 
 /// The answers gathered by one refresh. Answers to an older refresh are ignored.
@@ -257,6 +260,11 @@ void ProjectsModel::readFolder(const std::shared_ptr<Refresh> &refresh, int proj
             if (m_driver->capabilities() & Presence) {
                 askWhoIsEditing(refresh, project);
             }
+        } else {
+            p.statusKnown = true;
+            if (p.foldersWanted) {
+                settleFolders(refresh, project);
+            }
         }
         stepDone(refresh);
     });
@@ -280,6 +288,10 @@ void ProjectsModel::askStatus(const std::shared_ptr<Refresh> &refresh, int proje
             refresh->signInNeeded = true;
         } else {
             p.errorText = job->errorText();
+        }
+        p.statusKnown = true;
+        if (p.foldersWanted) {
+            settleFolders(refresh, project);
         }
         stepDone(refresh);
     });
@@ -337,13 +349,41 @@ void ProjectsModel::askRemoteProjects(const std::shared_ptr<Refresh> &refresh)
                 Project p;
                 p.entry.driverId = m_driver->id();
                 p.entry.info = info;
+                p.statusKnown = true;
                 refresh->projects.push_back(p);
                 index = int(refresh->projects.size()) - 1;
             }
-            askFolders(refresh, index);
+            // A downloaded project's status says which version the server has: its folders wait for it.
+            refresh->projects[size_t(index)].foldersWanted = true;
+            if (refresh->projects[size_t(index)].statusKnown) {
+                settleFolders(refresh, index);
+            }
         }
         stepDone(refresh);
     });
+}
+
+void ProjectsModel::settleFolders(const std::shared_ptr<Refresh> &refresh, int project)
+{
+    // How long the folders of a project that is not downloaded are taken as listed: nothing says
+    // when its version on the server changes without asking the server for them again.
+    constexpr qint64 notDownloadedReuseMs = 10 * 60 * 1000;
+
+    Project &p = refresh->projects[size_t(project)];
+    p.foldersWanted = false;
+    const auto listed = m_listedFolders.constFind(p.entry.info.id);
+    if (listed != m_listedFolders.constEnd()) {
+        const QString version = p.status.serverVersion;
+        // Downloaded: the same version, or a version not known now (no network), keeps the list.
+        const bool same = p.downloaded && (version.isEmpty() || version == listed->serverVersion);
+        const bool recent = !p.downloaded && listed->age.isValid() && !listed->age.hasExpired(notDownloadedReuseMs);
+        if (same || recent) {
+            p.remoteFolders = listed->folders;
+            return;
+        }
+    }
+    p.listedVersion = p.status.serverVersion;
+    askFolders(refresh, project);
 }
 
 void ProjectsModel::askFolders(const std::shared_ptr<Refresh> &refresh, int project)
@@ -363,7 +403,12 @@ void ProjectsModel::askFolders(const std::shared_ptr<Refresh> &refresh, int proj
                     folders << clean;
                 }
             }
-            refresh->projects[size_t(project)].remoteFolders = folders;
+            Project &p = refresh->projects[size_t(project)];
+            p.remoteFolders = folders;
+            ListedFolders &kept = m_listedFolders[p.entry.info.id];
+            kept.serverVersion = p.listedVersion;
+            kept.folders = folders;
+            kept.age.start();
         } else if (job->error() == KisVersioningJob::NotSignedIn) {
             refresh->signInNeeded = true;
         }
