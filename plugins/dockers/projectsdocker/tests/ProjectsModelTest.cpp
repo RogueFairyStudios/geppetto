@@ -716,6 +716,42 @@ void ProjectsModelTest::testSecondTickWaitsForTheFirst()
     QCOMPARE(f.settings.projects().size(), 1);
 }
 
+void ProjectsModelTest::testChoiceShowsAtOnceWithItsProgress()
+{
+    Fixture f;
+    HeldDownloadDriver driver;
+    serveProjects(driver, {ProjectInfo{QStringLiteral("p2"), QStringLiteral("Space"), QString()}});
+    driver.setProjectFolders(QStringLiteral("p2"), {QStringLiteral("art"), QStringLiteral("ui")});
+    ProjectsModel model(&driver, &f.settings);
+    QVERIFY(refreshAndWait(model));
+    QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
+
+    // The box shows the choice at once, and the project says it is busy.
+    QVERIFY(model.setData(childNamed(model, model.index(0, 0), QStringLiteral("ui")), Qt::Checked, Qt::CheckStateRole));
+    QCOMPARE(childNamed(model, model.index(0, 0), QStringLiteral("ui")).data(Qt::CheckStateRole).toInt(), int(Qt::Checked));
+    QCOMPARE(childNamed(model, model.index(0, 0), QStringLiteral("art")).data(Qt::CheckStateRole).toInt(), int(Qt::Unchecked));
+    QCOMPARE(notice(model.index(0, 0)), QString::fromUtf8("Updating your folders…"));
+    QVERIFY(!changed.isEmpty());
+
+    // The download's progress shows beside the project.
+    QCOMPARE(driver.held.size(), 1);
+    const QPointer<KisVersioningJob> download = driver.held.first();
+    download->reportProgress(50, 200, QStringLiteral("Downloading Space"));
+    QTRY_COMPARE(notice(model.index(0, 0)), QStringLiteral("Downloading Space (25%)"));
+
+    // Done and shown: no longer busy.
+    QSignalSpy refreshed(&model, &ProjectsModel::refreshed);
+    download->finish(QVariant::fromValue(QStringList{QStringLiteral("art")}));
+    QVERIFY(refreshed.wait(5000));
+    QVERIFY(notice(model.index(0, 0)).isEmpty());
+    QCOMPARE(childNamed(model, model.index(0, 0), QStringLiteral("ui")).data(Qt::CheckStateRole).toInt(), int(Qt::Checked));
+
+    // A choice refused at once leaves the box as it was.
+    QVERIFY(!model.setData(childNamed(model, model.index(0, 0), QStringLiteral("ui")), Qt::Unchecked, Qt::CheckStateRole));
+    QCOMPARE(childNamed(model, model.index(0, 0), QStringLiteral("ui")).data(Qt::CheckStateRole).toInt(), int(Qt::Checked));
+    QVERIFY(notice(model.index(0, 0)).isEmpty());
+}
+
 void ProjectsModelTest::testDownloadFolderStaysInsideTheProjectsFolder()
 {
     Fixture f;

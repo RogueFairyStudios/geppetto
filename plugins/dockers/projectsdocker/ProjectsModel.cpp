@@ -422,6 +422,20 @@ void ProjectsModel::stepDone(const std::shared_ptr<Refresh> &refresh)
         return;
     }
     m_refresh.reset();
+    // The list now shows what the released projects' operations did; choices still waiting their
+    // turn stay shown.
+    for (const QString &projectId : std::as_const(refresh->releasedProjects)) {
+        m_progress.remove(projectId);
+        QHash<QString, bool> waiting;
+        for (const Choice &choice : m_waitingChoices.value(projectId)) {
+            waiting.insert(choice.folder.toLower(), choice.chosen);
+        }
+        if (waiting.isEmpty()) {
+            m_shownChoices.remove(projectId);
+        } else {
+            m_shownChoices.insert(projectId, waiting);
+        }
+    }
     apply(*refresh);
     Q_EMIT refreshed();
 
@@ -622,6 +636,56 @@ void ProjectsModel::setBusy(const QString &projectId, bool busy)
     if (wasBusy != isBusy()) {
         Q_EMIT busyChanged();
     }
+    projectChanged(projectId);
+}
+
+void ProjectsModel::showChoice(const QString &projectId, const QString &folder, bool chosen)
+{
+    m_shownChoices[projectId].insert(folder.toLower(), chosen);
+    projectChanged(projectId);
+}
+
+void ProjectsModel::forgetChoice(const QString &projectId, const QString &folder)
+{
+    const auto it = m_shownChoices.find(projectId);
+    if (it != m_shownChoices.end()) {
+        it->remove(folder.toLower());
+        if (it->isEmpty()) {
+            m_shownChoices.erase(it);
+        }
+    }
+    projectChanged(projectId);
+}
+
+bool ProjectsModel::isChecked(const Node *node) const
+{
+    const auto shown = m_shownChoices.constFind(m_projects[size_t(node->project)].entry.info.id);
+    if (shown != m_shownChoices.constEnd()) {
+        const auto choice = shown->constFind(node->choiceName.toLower());
+        if (choice != shown->constEnd()) {
+            return *choice;
+        }
+    }
+    return node->checked;
+}
+
+void ProjectsModel::projectChanged(const QString &projectId)
+{
+    for (int row = 0; row < int(m_projects.size()); ++row) {
+        if (m_projects[size_t(row)].entry.info.id != projectId) {
+            continue;
+        }
+        const QModelIndex project = index(row, 0);
+        Q_EMIT dataChanged(project, project.sibling(row, 1));
+        const Node *node = nodeAt(project);
+        for (const std::unique_ptr<Node> &child : node->children) {
+            if (!child->choiceName.isEmpty()) {
+                const QModelIndex folder = createIndex(child->row, 0, child.get());
+                Q_EMIT dataChanged(folder, createIndex(child->row, 1, child.get()));
+            }
+        }
+        return;
+    }
 }
 
 void ProjectsModel::addFolder(const QString &path)
@@ -704,12 +768,17 @@ bool ProjectsModel::chooseFolder(Node *folder, bool chosen)
 {
     const Project &project = m_projects[size_t(folder->project)];
     const Choice choice{project.entry.info, folder->choiceName, chosen};
+    showChoice(choice.info.id, choice.folder, chosen);
     if (m_busyProjects.contains(choice.info.id)) {
         // Taken in turn, once the list shows what the operation under way did.
         m_waitingChoices[choice.info.id].append(choice);
         return true;
     }
-    return startChoice(choice);
+    if (!startChoice(choice)) {
+        forgetChoice(choice.info.id, choice.folder);
+        return false;
+    }
+    return true;
 }
 
 QStringList ProjectsModel::keptFolders(const KisVersioningSettings::Project &stored) const
@@ -843,6 +912,12 @@ void ProjectsModel::runProjectJob(const QString &projectId, KisVersioningJob *jo
                                   const std::function<void(KisVersioningJob *)> &onSuccess)
 {
     setBusy(projectId, true);
+    connect(job, &KisVersioningJob::progress, this, [this, projectId](qint64 done, qint64 total, const QString &label) {
+        if (m_busyProjects.contains(projectId)) {
+            m_progress.insert(projectId, {done, total, label});
+            projectChanged(projectId);
+        }
+    });
     connect(job, &KisVersioningJob::finished, this, [this, projectId, onSuccess](KisVersioningJob *job) {
         if (job->error() == KisVersioningJob::NoError) {
             onSuccess(job);
@@ -865,7 +940,10 @@ void ProjectsModel::startWaitingChoice(const QString &projectId)
 {
     QList<Choice> &waiting = m_waitingChoices[projectId];
     while (!waiting.isEmpty() && !m_busyProjects.contains(projectId)) {
-        startChoice(waiting.takeFirst());
+        const Choice choice = waiting.takeFirst();
+        if (!startChoice(choice)) {
+            forgetChoice(projectId, choice.folder);
+        }
     }
     if (waiting.isEmpty()) {
         m_waitingChoices.remove(projectId);
@@ -891,6 +969,14 @@ QString ProjectsModel::noticeFor(const Node *node) const
 {
     if (node->kind == Node::ProjectNode) {
         const Project &project = m_projects[size_t(node->project)];
+        if (m_busyProjects.contains(project.entry.info.id)) {
+            const Progress progress = m_progress.value(project.entry.info.id);
+            const QString label = progress.label.isEmpty() ? i18n("Updating your folders…") : progress.label;
+            if (progress.total > 0) {
+                return i18n("%1 (%2%)", label, int(qBound(qint64(0), progress.done * 100 / progress.total, qint64(100))));
+            }
+            return label;
+        }
         return project.folderMissing ? i18n("Folder not found") : project.errorText;
     }
     QStringList parts;
@@ -961,7 +1047,7 @@ QVariant ProjectsModel::data(const QModelIndex &index, int role) const
     }
     case Qt::CheckStateRole:
         if (index.column() == 0 && !node->choiceName.isEmpty()) {
-            return int(node->checked ? Qt::Checked : Qt::Unchecked);
+            return int(isChecked(node) ? Qt::Checked : Qt::Unchecked);
         }
         return QVariant();
     case PathRole:
@@ -973,7 +1059,7 @@ QVariant ProjectsModel::data(const QModelIndex &index, int role) const
     case ConflictCopyRole:
         return !node->markerCopyPath.isEmpty();
     case CheckedFolderRole:
-        return !node->choiceName.isEmpty() ? QVariant(node->checked) : QVariant();
+        return !node->choiceName.isEmpty() ? QVariant(isChecked(node)) : QVariant();
     case OutsideRole:
         return node->outside;
     default:

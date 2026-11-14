@@ -39,7 +39,9 @@ class ProjectsDocuments;
  * sent: it is shown as such and counted in the summary. A folder cannot be
  * unticked while one of its documents is open, nor when it is the last one
  * ticked. A project takes one choice at a time; a choice made while the
- * project is busy waits until the list shows the previous one.
+ * project is busy waits until the list shows the previous one. A choice shows
+ * in its box at once, and the project shows that it is busy, with the
+ * progress of the operation, until the list shows what it did.
  * Files never synchronised and hidden folders (where the drivers keep their
  * own data) are not shown.
  *
@@ -135,6 +137,12 @@ private:
     void runProjectJob(const QString &projectId, KisVersioningJob *job, const std::function<void(KisVersioningJob *)> &onSuccess);
     void releaseAfterRefresh(const QString &projectId);
     void setBusy(const QString &projectId, bool busy);
+    /// Shows @p chosen in the box of @p folder until the list shows the outcome.
+    void showChoice(const QString &projectId, const QString &folder, bool chosen);
+    void forgetChoice(const QString &projectId, const QString &folder);
+    bool isChecked(const Node *node) const;
+    /// Tells the views that the row of the project and its folders' boxes changed.
+    void projectChanged(const QString &projectId);
 
     KisVersioningDriver *m_driver;
     KisVersioningSettings *m_settings;
@@ -160,6 +168,15 @@ private:
         QElapsedTimer age;
     };
     QHash<QString, ListedFolders> m_listedFolders;
+    /// What the operation of a busy project last reported, by project id.
+    struct Progress {
+        qint64 done = 0;
+        qint64 total = 0;
+        QString label;
+    };
+    QHash<QString, Progress> m_progress;
+    /// The choices shown in their boxes before the list shows them: project id, then folder in lower case.
+    QHash<QString, QHash<QString, bool>> m_shownChoices;
 };
 
 #endif // PROJECTSMODEL_H

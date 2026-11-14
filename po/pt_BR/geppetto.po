@@ -211,6 +211,15 @@ msgid "Folder not found"
 msgstr "Pasta não encontrada"
 
 #: plugins/dockers/projectsdocker/ProjectsModel.cpp
+msgid "Updating your folders…"
+msgstr "Atualizando as suas pastas…"
+
+#: plugins/dockers/projectsdocker/ProjectsModel.cpp
+#, kde-format
+msgid "%1 (%2%)"
+msgstr "%1 (%2%)"
+
+#: plugins/dockers/projectsdocker/ProjectsModel.cpp
 msgid "not sent: outside your folders"
 msgstr "não enviado: fora das suas pastas"
 

@@ -33,6 +33,7 @@ private Q_SLOTS:
     void testUntickAsksForTheStatusAgain();
     void testUntickGoesAheadWhenTheStatusIsClean();
     void testSecondTickWaitsForTheFirst();
+    void testChoiceShowsAtOnceWithItsProgress();
     void testDownloadFolderStaysInsideTheProjectsFolder();
     void testSameNameGetsAFreeFolder();
     void testFolderInUseIsNotReused();
