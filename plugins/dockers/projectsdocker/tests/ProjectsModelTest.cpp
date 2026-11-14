@@ -155,12 +155,16 @@ public:
 };
 
 /// Open documents for the runner tests. Saves wait until the test lets them end.
-class HeldSaves : public KisVersioningDocumentHost
+class HeldSaves : public ProjectsDocuments
 {
 public:
     QHash<QString, QStringList> modified;  ///< modified documents per project folder
+    QHash<QString, QStringList> foreign;   ///< of those, the ones not in Krita's own format
     QStringList openUnmodified;            ///< documents open without changes
     QList<std::function<void(bool)>> held;
+
+    QStringList openDocumentsIn(const QString &) const override { return {}; }
+    QStringList unsavedForeignDocuments(const QString &projectPath) const override { return foreign.value(projectPath); }
 
     QStringList modifiedOpenDocuments(const QString &projectPath) const override
     {
@@ -1112,6 +1116,34 @@ void ProjectsModelTest::testRunnerReportsStaleDocuments()
     const ProjectsSyncRunner::Result result = runner.results().first();
     QCOMPARE(result.report.received, QStringList{QStringLiteral("ui/botao.kra")});
     QCOMPARE(result.staleDocuments, QStringList{QStringLiteral("ui/botao.kra")});
+}
+
+void ProjectsModelTest::testRunnerLeavesOutAProjectWithAnUnsavedForeignFile()
+{
+    Fixture f;
+    QDir().mkpath(f.path(QStringLiteral("a")));
+    QDir().mkpath(f.path(QStringLiteral("b")));
+    HeldSaves host;
+    host.modified.insert(f.path(QStringLiteral("a")), {f.path(QStringLiteral("a/ui/fundo.png"))});
+    host.foreign.insert(f.path(QStringLiteral("a")), {f.path(QStringLiteral("a/ui/fundo.png"))});
+    ProjectsSyncRunner runner(&f.driver, &host);
+    QSignalSpy finished(&runner, &ProjectsSyncRunner::finished);
+
+    runner.start({f.path(QStringLiteral("a")), f.path(QStringLiteral("b"))}, QString());
+    QVERIFY(finished.wait(5000));
+
+    // The project with the file does not start: nothing is saved, nothing reaches the driver.
+    const QVector<ProjectsSyncRunner::Result> results = runner.results();
+    QCOMPARE(results.size(), 2);
+    QCOMPARE(results.at(0).report.error, KisVersioningJob::Failed);
+    QCOMPARE(results.at(0).report.errorText,
+             QStringLiteral("fundo.png has unsaved changes and is not a Krita file. Save it yourself, then synchronize again."));
+    QVERIFY(host.held.isEmpty());
+    // The other project goes ahead.
+    QCOMPARE(results.at(1).report.error, KisVersioningJob::NoError);
+    const QList<KisVersioningFakeDriver::Call> calls = f.driver.callsNamed(QStringLiteral("synchronise"));
+    QCOMPARE(calls.size(), 1);
+    QCOMPARE(calls.first().args.first(), f.path(QStringLiteral("b")));
 }
 
 void ProjectsModelTest::testPluginRegistersThePanel()

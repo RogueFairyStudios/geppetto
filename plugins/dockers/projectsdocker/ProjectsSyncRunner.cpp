@@ -4,8 +4,13 @@
 #include "ProjectsSyncRunner.h"
 
 #include <QDir>
+#include <QFileInfo>
 #include <QMetaObject>
 #include <QSet>
+
+#include <klocalizedstring.h>
+
+#include "ProjectsDocuments.h"
 
 namespace {
 
@@ -22,7 +27,7 @@ QString comparable(const QString &path)
 
 } // namespace
 
-ProjectsSyncRunner::ProjectsSyncRunner(KisVersioningDriver *driver, KisVersioningDocumentHost *host, QObject *parent)
+ProjectsSyncRunner::ProjectsSyncRunner(KisVersioningDriver *driver, ProjectsDocuments *host, QObject *parent)
     : QObject(parent)
     , m_driver(driver)
     , m_host(host)
@@ -85,6 +90,24 @@ void ProjectsSyncRunner::startNext()
 
     const int index = m_results.size();
     const QString path = m_paths.at(index);
+
+    const QStringList foreign = m_host->unsavedForeignDocuments(path);
+    if (!foreign.isEmpty()) {
+        QStringList texts;
+        for (const QString &document : foreign) {
+            texts << i18n("%1 has unsaved changes and is not a Krita file. Save it yourself, then synchronize again.",
+                          QFileInfo(document).fileName());
+        }
+        KisVersioningSyncSession::Report report;
+        report.error = KisVersioningJob::Failed;
+        report.errorText = texts.join(QLatin1Char('\n'));
+        m_results.append({path, report, QStringList()});
+        Q_EMIT projectFinished(index);
+        // On the next turn of the event loop, as when a session ends.
+        QMetaObject::invokeMethod(this, &ProjectsSyncRunner::startNext, Qt::QueuedConnection);
+        return;
+    }
+
     auto *session = new KisVersioningSyncSession(m_driver, m_host, this);
     connect(session, &KisVersioningSyncSession::progress, this,
             [this, index](qint64 done, qint64 total, const QString &label) {

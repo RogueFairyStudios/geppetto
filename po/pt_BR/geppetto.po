@@ -160,6 +160,15 @@ msgstr ""
 "%1 foi trocado pela outra versão enquanto você continuava trabalhando. Salve "
 "o seu trabalho com outro nome."
 
+#: plugins/dockers/projectsdocker/ProjectsSyncRunner.cpp
+#, kde-format
+msgid ""
+"%1 has unsaved changes and is not a Krita file. Save it yourself, then "
+"synchronize again."
+msgstr ""
+"%1 tem alterações não salvas e não é um arquivo do Krita. Salve você mesmo e "
+"sincronize de novo."
+
 #: plugins/dockers/projectsdocker/ProjectsController.cpp
 msgid "Sign in again to send your work"
 msgstr "Entre de novo para enviar o seu trabalho"

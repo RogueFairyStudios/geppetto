@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QTimer>
 
 #include <KisDocument.h>
 #include <KisImportExportErrorCode.h>
@@ -127,7 +128,7 @@ void ProjectsDocumentHost::saveDocument(const QString &absolutePath, std::functi
     QPointer<KisDocument> document;
     const QList<KisDocument *> open = documentsAt(absolutePath);
     for (KisDocument *candidate : open) {
-        if (candidate->isModified()) {
+        if (candidate->isModified() || candidate->isSaving()) {
             document = candidate;
             break;
         }
@@ -137,7 +138,47 @@ void ProjectsDocumentHost::saveDocument(const QString &absolutePath, std::functi
         done(!open.isEmpty());
         return;
     }
+    if (!isNativeFormat(document)) {
+        // Saved here, a file in another format could be flattened or lose what it cannot hold, or
+        // the save could stop to ask the artist. A synchronisation never does it: the panel asks
+        // the artist to save it (ProjectsSyncRunner), and this is the last guard.
+        done(false);
+        return;
+    }
+    if (document->isSaving()) {
+        waitForSave(document, std::move(done));
+        return;
+    }
+    startSave(document, std::move(done));
+}
 
+void ProjectsDocumentHost::waitForSave(const QPointer<KisDocument> &document, std::function<void(bool)> done)
+{
+    // Another save of the document is under way, the artist's or an automatic one: a second save
+    // now would fail beside it, with Krita's error in front of the artist. Its end is awaited, then
+    // the document is saved again if it still has changes.
+    auto *timer = new QTimer(this);
+    timer->setInterval(100);
+    auto report = std::make_shared<std::function<void(bool)>>(std::move(done));
+    connect(timer, &QTimer::timeout, this, [this, timer, document, report]() {
+        if (document && document->isSaving()) {
+            return;
+        }
+        timer->stop();
+        timer->deleteLater();
+        if (!document) {
+            (*report)(false);
+        } else if (document->isModified()) {
+            startSave(document, *report);
+        } else {
+            (*report)(true);
+        }
+    });
+    timer->start();
+}
+
+void ProjectsDocumentHost::startSave(const QPointer<KisDocument> &document, std::function<void(bool)> done)
+{
     struct Pending {
         std::function<void(bool)> done;
         QList<QMetaObject::Connection> connections;

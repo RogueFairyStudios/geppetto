@@ -289,6 +289,58 @@ void ProjectsDocumentHostTest::testSavedSinceFollowsTheSaves()
     QVERIFY(!host.savedSince(dir.filePath(QStringLiteral("game/other.kra")), before));
 }
 
+void ProjectsDocumentHostTest::testForeignDocumentIsNeverSaved()
+{
+    QTemporaryDir dir;
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("game"))));
+    const QString project = dir.filePath(QStringLiteral("game"));
+    const QString png = dir.filePath(QStringLiteral("game/ui/fundo.png"));
+    writeFile(png, "earlier content");
+    KisDocument *foreign = openDocument(png, true, true);
+    foreign->setMimeType("image/png");
+    openDocument(dir.filePath(QStringLiteral("game/ui/clean.png")), false, true)->setMimeType("image/png");
+    openDocument(dir.filePath(QStringLiteral("game/ui/native.kra")), true, true);
+
+    ProjectsDocumentHost host;
+    QCOMPARE(host.unsavedForeignDocuments(project), QStringList{png});
+
+    // Saving it would flatten it or ask questions: a synchronisation never does it by itself.
+    auto outcome = std::make_shared<SaveOutcome>();
+    host.saveDocument(png, recordInto(outcome, png, foreign));
+    QTRY_COMPARE_WITH_TIMEOUT(outcome->calls, 1, 5000);
+    QVERIFY(!outcome->ok);
+    QTest::qWait(300);
+    QCOMPARE(outcome->calls, 1);
+    QVERIFY(foreign->isModified());
+    QVERIFY(!foreign->isSaving());
+    QFile file(png);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), QByteArray("earlier content"));
+}
+
+void ProjectsDocumentHostTest::testSaveWaitsForASaveUnderWay()
+{
+    QTemporaryDir dir;
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("game"))));
+    const QString path = dir.filePath(QStringLiteral("game/a.kra"));
+    KisDocument *document = openDocument(path, true, true);
+
+    // The artist's own save is still running when the synchronisation asks.
+    QVERIFY(document->save(false, nullptr));
+    ProjectsDocumentHost host;
+    auto outcome = std::make_shared<SaveOutcome>();
+    host.saveDocument(path, recordInto(outcome, path, document));
+
+    // It waits for that save instead of failing next to it, and reports once.
+    QTRY_COMPARE_WITH_TIMEOUT(outcome->calls, 1, 60000);
+    QVERIFY(outcome->ok);
+    QVERIFY(outcome->fileWritten);
+    QVERIFY(outcome->documentClean);
+    QTest::qWait(300);
+    QCOMPARE(outcome->calls, 1);
+    QVERIFY(!document->isSaving());
+}
+
 void ProjectsDocumentHostTest::testReloadDecision()
 {
     QTemporaryDir dir;

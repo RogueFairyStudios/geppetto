@@ -23,6 +23,8 @@ private Q_SLOTS:
     void testSaveIntoReadOnlyFileFails();
     void testSaveIntoMissingFolderFails();
     void testSavedSinceFollowsTheSaves();
+    void testForeignDocumentIsNeverSaved();
+    void testSaveWaitsForASaveUnderWay();
     void testReloadDecision();
     void testReloadLeavesModifiedDocumentAlone();
 };

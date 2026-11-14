@@ -21,7 +21,8 @@ class KisDocument;
  * ignoring case on Windows and macOS.
  *
  * Saving runs in the background, as Krita always saves: done() comes from the
- * document's signals, never from a nested event loop.
+ * document's signals, never from a nested event loop. Only documents in Krita's
+ * own format are saved; a save already under way is awaited first.
  *
  * Krita has no "reload" action, so reloading opens the file again as a new
  * document and puts it in the place of each view of the old one, keeping the
@@ -61,6 +62,8 @@ public:
 
 private:
     static QList<KisDocument *> documentsAt(const QString &absolutePath);
+    void startSave(const QPointer<KisDocument> &document, std::function<void(bool)> done);
+    void waitForSave(const QPointer<KisDocument> &document, std::function<void(bool)> done);
     void reloadNow(const QString &absolutePath);
     void reload(const QPointer<KisDocument> &document);
 

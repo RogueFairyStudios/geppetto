@@ -13,11 +13,16 @@
 
 class KisVersioningDocumentHost;
 class KisVersioningDriver;
+class ProjectsDocuments;
 
 /**
  * Synchronises several projects one after the other, with the same notes:
  * one KisVersioningSyncSession per project, each starting when the one
  * before has finished. A project that fails does not stop the others.
+ *
+ * A project with an open document that has unsaved changes and is not in
+ * Krita's own format does not start: a synchronisation never saves such a
+ * file, and the artist is asked to save it.
  *
  * finished() is emitted once per run, never from inside start().
  */
@@ -41,7 +46,7 @@ public:
     static QStringList staleDocuments(const QString &projectPath, const KisVersioningSyncSession::Report &report,
                                       const KisVersioningDocumentHost &host);
 
-    ProjectsSyncRunner(KisVersioningDriver *driver, KisVersioningDocumentHost *host, QObject *parent = nullptr);
+    ProjectsSyncRunner(KisVersioningDriver *driver, ProjectsDocuments *host, QObject *parent = nullptr);
     ~ProjectsSyncRunner() override;
 
     /// Does nothing while a run is under way.
@@ -61,7 +66,7 @@ private:
     void startNext();
 
     KisVersioningDriver *m_driver;
-    KisVersioningDocumentHost *m_host;
+    ProjectsDocuments *m_host;
     bool m_running {false};
     QStringList m_paths;
     QString m_notes;

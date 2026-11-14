@@ -48,6 +48,7 @@ private Q_SLOTS:
     void testRunnerGoesOnAfterAFailure();
     void testStaleDocumentsAreTheModifiedOnes();
     void testRunnerReportsStaleDocuments();
+    void testRunnerLeavesOutAProjectWithAnUnsavedForeignFile();
 
     void testPluginRegistersThePanel();
     void testTitleIsTranslated();
