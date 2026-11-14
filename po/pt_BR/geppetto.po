@@ -202,6 +202,26 @@ msgid "Folder not found"
 msgstr "Pasta não encontrada"
 
 #: plugins/dockers/projectsdocker/ProjectsModel.cpp
+msgid "not sent: outside your folders"
+msgstr "não enviado: fora das suas pastas"
+
+#: plugins/dockers/projectsdocker/ProjectsModel.cpp
+msgid "1 file outside your folders"
+msgid_plural "%1 files outside your folders"
+msgstr[0] "1 arquivo fora das suas pastas"
+msgstr[1] "%1 arquivos fora das suas pastas"
+
+#: plugins/dockers/projectsdocker/ProjectsModel.cpp
+#, kde-format
+msgid "Keep at least one folder of %1 on this computer."
+msgstr "Mantenha pelo menos uma pasta de %1 neste computador."
+
+#: plugins/dockers/projectsdocker/ProjectsModel.cpp
+#, kde-format
+msgid "Close %1 before removing %2 from your choice."
+msgstr "Feche %1 antes de tirar %2 da sua escolha."
+
+#: plugins/dockers/projectsdocker/ProjectsModel.cpp
 msgid "1 update"
 msgid_plural "%1 updates"
 msgstr[0] "1 atualização"

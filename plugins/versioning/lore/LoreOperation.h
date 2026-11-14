@@ -140,6 +140,8 @@ struct LoreStatusFile {
 };
 
 struct LoreStatus {
+    QString repository;       ///< the project's identifier on the server (hexadecimal)
+    QString remoteRevision;   ///< the server's latest version (hexadecimal); zeros when not known
     QString branchName;
     QString revision;         ///< the version the folder is on (hexadecimal)
     quint64 number {0};

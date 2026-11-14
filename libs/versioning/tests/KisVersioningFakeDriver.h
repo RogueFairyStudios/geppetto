@@ -59,8 +59,12 @@ public:
     void setListProjectsError(KisVersioningJob::Error error, const QString &text = QString());
     /// What listFolders() returns for the project with @p projectId; by default no folder.
     void setProjectFolders(const QString &projectId, const QStringList &folders);
-    /// A successful downloadProject() creates the local folder and the chosen folders in it.
+    /// A successful downloadProject() creates the local folder and the chosen folders in it, and ends
+    /// with the folders of the project (setProjectFolders) it left out, as a real driver does.
     void setDownloadError(KisVersioningJob::Error error, const QString &text = QString());
+    /// The project downloaded at @p localPath, so that setFolders() knows which folders it leaves out.
+    /// A successful downloadProject() records it too.
+    void setLocalProject(const QString &localPath, const QString &projectId);
     void setSetFoldersError(KisVersioningJob::Error error, const QString &text = QString());
     /// While held, the jobs of the operation named @p name (for example "synchronise") do not end;
     /// releaseHeld() ends them with the outcome they would have had.
@@ -119,6 +123,7 @@ private:
     Outcome m_download;
     Outcome m_setFolders;
     QHash<QString, QStringList> m_projectFolders;
+    QHash<QString, QString> m_localProjects;   ///< local path to project id
     QHash<QString, QByteArray> m_theirContent;
     std::function<void()> m_userHook;
     QStringList *m_sharedLog {nullptr};

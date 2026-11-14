@@ -24,7 +24,8 @@ public:
         QString driverId;
         KisVersioning::ProjectInfo info;
         QString localPath;
-        QStringList folders;
+        QStringList folders;   ///< the folders chosen; empty for the whole project
+        QStringList leftOut;   ///< the top-level folders of the server the driver left out of this computer
     };
 
     explicit KisVersioningSettings(KSharedConfigPtr config = KSharedConfig::openConfig());
@@ -43,7 +44,8 @@ public:
     /// A project with the same local path (compared after normalising it) is replaced.
     void addProject(const Project &project);
     void removeProject(const QString &localPath);
-    void setFolders(const QString &localPath, const QStringList &folders);
+    /// A new choice of folders, with the folders the driver left out because of it.
+    void setFolders(const QString &localPath, const QStringList &folders, const QStringList &leftOut = QStringList());
 
 private:
     void storeProjects(const QVector<Project> &projects);

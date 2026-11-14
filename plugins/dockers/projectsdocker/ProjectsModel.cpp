@@ -17,6 +17,8 @@
 
 #include <KisVersioningFileRules.h>
 
+#include "ProjectsDocuments.h"
+
 using namespace KisVersioning;
 
 namespace {
@@ -123,6 +125,13 @@ bool hasUnsentWork(const ProjectStatus &status, const QString &folder)
     });
 }
 
+/// The top-level folder of @p relativePath; empty for a file at the root.
+QString topFolder(const QString &relativePath)
+{
+    const int slash = relativePath.indexOf(QLatin1Char('/'));
+    return slash > 0 ? relativePath.left(slash) : QString();
+}
+
 QString stateText(FileState state)
 {
     switch (state) {
@@ -152,6 +161,7 @@ struct ProjectsModel::Node {
     QString markerCopyPath;     ///< for a conflict copy: the copy path its marker records
     QString choiceName;         ///< for a folder the driver lets the artist choose: the driver's own spelling
     bool checked = false;
+    bool outside = false;       ///< a file in a folder the driver left out: never sent
     Node *parent = nullptr;
     int row = 0;
     std::vector<std::unique_ptr<Node>> children;
@@ -178,10 +188,12 @@ struct ProjectsModel::Refresh {
     QStringList releasedProjects;   ///< busy projects that become free once this refresh is applied
 };
 
-ProjectsModel::ProjectsModel(KisVersioningDriver *driver, KisVersioningSettings *settings, QObject *parent)
+ProjectsModel::ProjectsModel(KisVersioningDriver *driver, KisVersioningSettings *settings, ProjectsDocuments *documents,
+                             QObject *parent)
     : QAbstractItemModel(parent)
     , m_driver(driver)
     , m_settings(settings)
+    , m_documents(documents)
     , m_root(std::make_unique<Node>())
 {
 }
@@ -382,6 +394,7 @@ void ProjectsModel::apply(const Refresh &refresh)
     m_signInNeeded = refresh.signInNeeded;
     m_root = std::make_unique<Node>();
     m_changedFiles = 0;
+    m_outsideFiles = 0;
     m_incoming = 0;
     m_pendingUpload = 0;
     for (int i = 0; i < int(m_projects.size()); ++i) {
@@ -396,6 +409,11 @@ void ProjectsModel::apply(const Refresh &refresh)
         for (const FileStatus &file : project.status.files) {
             if (file.state != FileState::Unchanged && isShown(file.path)) {
                 ++m_changedFiles;
+            }
+        }
+        if (project.downloaded) {
+            for (const QString &file : project.files) {
+                m_outsideFiles += project.entry.leftOut.contains(topFolder(file), Qt::CaseInsensitive) ? 1 : 0;
             }
         }
     }
@@ -436,7 +454,9 @@ std::unique_ptr<ProjectsModel::Node> ProjectsModel::buildProject(int index) cons
         ensure(folder, Node::FolderNode);
     }
     for (const QString &file : project.files) {
-        ensure(file, Node::FileNode);
+        Node *node = ensure(file, Node::FileNode);
+        // The driver left this folder out: whatever is on disk in it is never sent.
+        node->outside = project.downloaded && project.entry.leftOut.contains(topFolder(file), Qt::CaseInsensitive);
     }
     // A removed file is no longer on disk; it is listed from the status.
     for (const FileStatus &file : project.status.files) {
@@ -448,7 +468,7 @@ std::unique_ptr<ProjectsModel::Node> ProjectsModel::buildProject(int index) cons
         Node *node = ensure(folder, Node::FolderNode);
         if (node->kind == Node::FolderNode) {
             node->choiceName = folder;
-            node->checked = project.downloaded && project.entry.folders.contains(folder);
+            node->checked = project.downloaded && !project.entry.leftOut.contains(folder, Qt::CaseInsensitive);
         }
     }
     for (const KisVersioningConflictMarkers::Marker &marker : project.markers) {
@@ -493,6 +513,9 @@ QString ProjectsModel::summaryText() const
     }
     if (m_incoming > 0) {
         parts << i18np("1 update", "%1 updates", m_incoming);
+    }
+    if (m_outsideFiles > 0) {
+        parts << i18np("1 file outside your folders", "%1 files outside your folders", m_outsideFiles);
     }
     return parts.isEmpty() ? i18n("No changes") : parts.join(QStringLiteral(" · "));
 }
@@ -565,7 +588,7 @@ void ProjectsModel::addFolder(const QString &path)
     entry.info.name = QFileInfo(folder).fileName().isEmpty() ? folder : QFileInfo(folder).fileName();
     entry.localPath = folder;
     runProjectJob(folder, m_driver->downloadProject(entry.info, folder, QStringList()),
-                  [this, entry]() { m_settings->addProject(entry); });
+                  [this, entry](KisVersioningJob *) { m_settings->addProject(entry); });
 }
 
 void ProjectsModel::markConflictResolved(const QModelIndex &index)
@@ -641,15 +664,64 @@ bool ProjectsModel::chooseFolder(Node *folder, bool chosen)
     return startChoice(choice);
 }
 
+QStringList ProjectsModel::keptFolders(const KisVersioningSettings::Project &stored) const
+{
+    // The folders of the server as the last refresh listed them; without that list, the choice kept.
+    QStringList serverFolders;
+    for (const Project &project : m_projects) {
+        if (project.downloaded && project.entry.info.id == stored.info.id) {
+            serverFolders = project.remoteFolders;
+            break;
+        }
+    }
+    if (serverFolders.isEmpty()) {
+        return stored.folders;
+    }
+    QStringList kept;
+    for (const QString &folder : std::as_const(serverFolders)) {
+        if (!stored.leftOut.contains(folder, Qt::CaseInsensitive)) {
+            kept << folder;
+        }
+    }
+    return kept;
+}
+
+QString ProjectsModel::untickRefusal(const KisVersioningSettings::Project &stored, const QString &folder) const
+{
+    // An empty choice means the whole project to a driver: the last folder stays.
+    QStringList kept = keptFolders(stored);
+    kept.removeAll(folder);
+    if (kept.isEmpty()) {
+        return i18n("Keep at least one folder of %1 on this computer.",
+                    stored.info.name.isEmpty() ? QFileInfo(stored.localPath).fileName() : stored.info.name);
+    }
+    // A document of the folder still open would be saved back into a folder that is no longer
+    // synchronised.
+    if (m_documents) {
+        const QStringList open = m_documents->openDocumentsIn(QDir(stored.localPath).filePath(folder));
+        if (!open.isEmpty()) {
+            return i18n("Close %1 before removing %2 from your choice.", QFileInfo(open.first()).fileName(), folder);
+        }
+    }
+    return QString();
+}
+
 bool ProjectsModel::startChoice(const Choice &choice)
 {
     // Read from the settings now: the list on screen may be older than the last operation.
     const QString id = choice.info.id;
     KisVersioningSettings::Project stored;
     const bool downloaded = storedProject(id, &stored);
-    const bool isChosen = downloaded && stored.folders.contains(choice.folder);
+    const bool isChosen = downloaded && !stored.leftOut.contains(choice.folder, Qt::CaseInsensitive);
     if (choice.chosen == isChosen || (!choice.chosen && !downloaded)) {
         return false;
+    }
+    if (!choice.chosen) {
+        const QString refusal = untickRefusal(stored, choice.folder);
+        if (!refusal.isEmpty()) {
+            Q_EMIT operationFailed(refusal);
+            return false;
+        }
     }
 
     setBusy(id, true);
@@ -657,9 +729,13 @@ bool ProjectsModel::startChoice(const Choice &choice)
         untick(choice, stored.localPath);
     } else if (downloaded) {
         const QString localPath = stored.localPath;
-        const QStringList folders = stored.folders + QStringList{choice.folder};
-        runProjectJob(id, m_driver->setFolders(localPath, folders),
-                      [this, localPath, folders]() { m_settings->setFolders(localPath, folders); });
+        QStringList folders = keptFolders(stored);
+        if (!folders.contains(choice.folder, Qt::CaseInsensitive)) {
+            folders << choice.folder;
+        }
+        runProjectJob(id, m_driver->setFolders(localPath, folders), [this, localPath, folders](KisVersioningJob *job) {
+            m_settings->setFolders(localPath, folders, job->result<QStringList>());
+        });
     } else {
         KisVersioningSettings::Project entry;
         entry.driverId = m_driver->id();
@@ -668,7 +744,11 @@ bool ProjectsModel::startChoice(const Choice &choice)
         entry.folders = QStringList{choice.folder};
         m_downloadTargets.insert(id, pathKey(entry.localPath));
         runProjectJob(id, m_driver->downloadProject(entry.info, entry.localPath, entry.folders),
-                      [this, entry]() { m_settings->addProject(entry); });
+                      [this, entry](KisVersioningJob *job) {
+                          KisVersioningSettings::Project downloaded = entry;
+                          downloaded.leftOut = job->result<QStringList>();
+                          m_settings->addProject(downloaded);
+                      });
     }
     return true;
 }
@@ -696,19 +776,28 @@ void ProjectsModel::untick(const Choice &choice, const QString &localPath)
             releaseAfterRefresh(id);
             return;
         }
-        QStringList folders = stored.folders;
+        // Asked again: a document of the folder may have been opened meanwhile.
+        const QString refusal = untickRefusal(stored, choice.folder);
+        if (!refusal.isEmpty()) {
+            Q_EMIT operationFailed(refusal);
+            releaseAfterRefresh(id);
+            return;
+        }
+        QStringList folders = keptFolders(stored);
         folders.removeAll(choice.folder);
-        runProjectJob(id, m_driver->setFolders(localPath, folders),
-                      [this, localPath, folders]() { m_settings->setFolders(localPath, folders); });
+        runProjectJob(id, m_driver->setFolders(localPath, folders), [this, localPath, folders](KisVersioningJob *job) {
+            m_settings->setFolders(localPath, folders, job->result<QStringList>());
+        });
     });
 }
 
-void ProjectsModel::runProjectJob(const QString &projectId, KisVersioningJob *job, const std::function<void()> &onSuccess)
+void ProjectsModel::runProjectJob(const QString &projectId, KisVersioningJob *job,
+                                  const std::function<void(KisVersioningJob *)> &onSuccess)
 {
     setBusy(projectId, true);
     connect(job, &KisVersioningJob::finished, this, [this, projectId, onSuccess](KisVersioningJob *job) {
         if (job->error() == KisVersioningJob::NoError) {
-            onSuccess();
+            onSuccess(job);
         } else {
             Q_EMIT operationFailed(job->errorText());
         }
@@ -757,7 +846,7 @@ QString ProjectsModel::noticeFor(const Node *node) const
         return project.folderMissing ? i18n("Folder not found") : project.errorText;
     }
     QStringList parts;
-    const QString state = stateText(node->state);
+    const QString state = node->outside ? i18n("not sent: outside your folders") : stateText(node->state);
     if (!state.isEmpty()) {
         parts << state;
     }
@@ -837,6 +926,8 @@ QVariant ProjectsModel::data(const QModelIndex &index, int role) const
         return !node->markerCopyPath.isEmpty();
     case CheckedFolderRole:
         return !node->choiceName.isEmpty() ? QVariant(node->checked) : QVariant();
+    case OutsideRole:
+        return node->outside;
     default:
         return QVariant();
     }

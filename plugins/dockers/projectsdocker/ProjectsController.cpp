@@ -89,7 +89,7 @@ ProjectsController::ProjectsController(KisVersioningDriver *driver, ProjectsDocu
     , m_driver(driver)
     , m_documents(documents)
     , m_settings(settings)
-    , m_model(new ProjectsModel(driver, settings, this))
+    , m_model(new ProjectsModel(driver, settings, documents, this))
     , m_runner(new ProjectsSyncRunner(driver, documents, this))
     , m_presence(new ProjectsPresence(driver, settings, this))
     , m_saveRefresh(new QTimer(this))

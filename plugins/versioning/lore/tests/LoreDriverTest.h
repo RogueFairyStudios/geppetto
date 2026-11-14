@@ -51,6 +51,7 @@ private Q_SLOTS:
     void testBackToBackOperationsShareTheServerCheck();
     void testLateAnswerDoesNotOverwriteNewerState();
     void testSynchroniseAndStatusWithoutNetwork();
+    void testFolderMadeHereIsSentWhateverTheChoice();
 
 private:
     QString server() const;

@@ -840,4 +840,73 @@ void LoreDriverTest::testSynchroniseAndStatusWithoutNetwork()
     QCOMPARE(offlineAfter.result.value<ProjectStatus>().pendingUpload, 0);
 }
 
+void LoreDriverTest::testFolderMadeHereIsSentWhateverTheChoice()
+{
+    REQUIRE_BACKEND();
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Pair pair;
+    QVERIFY2(setUpPair(dir.path(), &pair, {{"ui/a.kra", "ui"}, {"concepts/b.kra", "concepts"}, {"raiz.kra", "root"}}),
+             "could not set up two copies of the project");
+
+    // The second person keeps only "ui": the driver says which folders of the server it left out.
+    const Outcome chosen = run(pair.b->setFolders(pair.pathB, {"ui"}));
+    VERIFY_OK(chosen);
+    QCOMPARE(chosen.result.toStringList(), QStringList({"concepts"}));
+    QVERIFY(!QFileInfo::exists(QDir(pair.pathB).filePath("concepts")));
+
+    // A folder that exists only on this computer, and new files beside the chosen ones, are sent.
+    QVERIFY(writeFile(pair.pathB, "icons/novo.kra", "icons"));
+    QVERIFY(writeFile(pair.pathB, "ui/novo.kra", "ui new"));
+    QVERIFY(writeFile(pair.pathB, "raiz2.kra", "root new"));
+    const Outcome state = run(pair.b->status(pair.pathB));
+    VERIFY_OK(state);
+    QStringList listed;
+    for (const FileStatus &file : state.result.value<ProjectStatus>().files) {
+        listed << file.path;
+    }
+    QVERIFY2(listed.contains("icons/novo.kra"), qPrintable(listed.join(", ")));
+    const Outcome sent = run(pair.b->synchronise(pair.pathB, "new folder"));
+    VERIFY_OK(sent);
+    const QStringList sentPaths = sent.result.value<SyncResult>().sent;
+    QVERIFY2(sentPaths.contains("icons/novo.kra"), qPrintable(sentPaths.join(", ")));
+    QVERIFY(sentPaths.contains("ui/novo.kra"));
+    QVERIFY(sentPaths.contains("raiz2.kra"));
+    QVERIFY(!sent.result.value<SyncResult>().pendingUpload);
+
+    VERIFY_OK(run(pair.a->synchronise(pair.pathA, QString())));
+    QCOMPARE(readFile(QDir(pair.pathA).filePath("icons/novo.kra")), QByteArray("icons"));
+    QCOMPARE(readFile(QDir(pair.pathA).filePath("ui/novo.kra")), QByteArray("ui new"));
+
+    // A folder of the server that was not chosen stays off this computer; a top-level folder another
+    // person adds later arrives, since it was not on the server when the choice was made.
+    QVERIFY(writeFile(pair.pathA, "concepts/b.kra", "concepts changed"));
+    QVERIFY(writeFile(pair.pathA, "depois/c.kra", "added later"));
+    VERIFY_OK(run(pair.a->synchronise(pair.pathA, "later")));
+    const Outcome received = run(pair.b->synchronise(pair.pathB, QString()));
+    VERIFY_OK(received);
+    QVERIFY(!QFileInfo::exists(QDir(pair.pathB).filePath("concepts")));
+    QCOMPARE(readFile(QDir(pair.pathB).filePath("depois/c.kra")), QByteArray("added later"));
+
+    // A download with a choice leaves out every other folder of the server, the new ones included.
+    LoreDriver third;
+    third.setIdentityForTesting(QStringLiteral("C"));
+    const QString pathC = dir.filePath("third");
+    const Outcome downloaded = run(third.downloadProject(m_project, pathC, {"ui"}));
+    VERIFY_OK(downloaded);
+    QStringList leftOut = downloaded.result.toStringList();
+    leftOut.sort();
+    QCOMPARE(leftOut, QStringList({"concepts", "depois", "icons"}));
+    QCOMPARE(readFile(QDir(pathC).filePath("ui/novo.kra")), QByteArray("ui new"));
+    QVERIFY(QFileInfo::exists(QDir(pathC).filePath("raiz2.kra")));
+    QVERIFY(!QFileInfo::exists(QDir(pathC).filePath("concepts")));
+    QVERIFY(!QFileInfo::exists(QDir(pathC).filePath("icons")));
+
+    // Back to the whole project: nothing is left out.
+    const Outcome whole = run(pair.b->setFolders(pair.pathB, QStringList()));
+    VERIFY_OK(whole);
+    QVERIFY(whole.result.toStringList().isEmpty());
+    QCOMPARE(readFile(QDir(pair.pathB).filePath("concepts/b.kra")), QByteArray("concepts changed"));
+}
+
 SIMPLE_TEST_MAIN(LoreDriverTest)

@@ -27,6 +27,7 @@ KisVersioningSettings::Project makeProject(const QString &path)
     p.info.serverAddress = "server.example:1234";
     p.localPath = path;
     p.folders = QStringList{"ui", "art/hero"};
+    p.leftOut = QStringList{"concepts"};
     return p;
 }
 
@@ -75,6 +76,7 @@ void KisVersioningSettingsTest::testProjectsRoundTrip()
     QCOMPARE(list[0].info.serverAddress, expected.info.serverAddress);
     QCOMPARE(list[0].localPath, expected.localPath);
     QCOMPARE(list[0].folders, expected.folders);
+    QCOMPARE(list[0].leftOut, expected.leftOut);
 }
 
 void KisVersioningSettingsTest::testRemoveProject()
@@ -96,9 +98,11 @@ void KisVersioningSettingsTest::testSetFolders()
     KisVersioningSettings s(openConfig(dir));
     s.addProject(makeProject(dir.filePath("a")));
     s.addProject(makeProject(dir.filePath("b")));
-    s.setFolders(dir.filePath("a"), {"sound"});
+    s.setFolders(dir.filePath("a"), {"sound"}, {"ui", "concepts"});
     QCOMPARE(s.projects()[0].folders, QStringList{"sound"});
+    QCOMPARE(s.projects()[0].leftOut, (QStringList{"ui", "concepts"}));
     QCOMPARE(s.projects()[1].folders, (QStringList{"ui", "art/hero"}));
+    QCOMPARE(s.projects()[1].leftOut, QStringList{"concepts"});
 }
 
 void KisVersioningSettingsTest::testMissingFolderStaysListed()

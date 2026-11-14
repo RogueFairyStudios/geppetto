@@ -28,6 +28,7 @@
 #include <KisVersioningSyncSession.h>
 
 #include "KisVersioningFakeDriver.h"
+#include "ProjectsDocuments.h"
 #include "ProjectsModel.h"
 #include "ProjectsSyncRunner.h"
 
@@ -198,7 +199,32 @@ void addRemoteGame(Fixture &f)
     f.addProject(QStringLiteral("game"), {QStringLiteral("ui"), QStringLiteral("art")});
     f.driver.setProjects({ProjectInfo{QStringLiteral("game"), QStringLiteral("game"), QString()}});
     f.driver.setProjectFolders(QStringLiteral("game"), {QStringLiteral("art"), QStringLiteral("ui")});
+    f.driver.setLocalProject(f.path(QStringLiteral("game")), QStringLiteral("game"));
 }
+
+/// Documents open in a pretend application, with or without changes.
+class OpenDocuments : public ProjectsDocuments
+{
+public:
+    QStringList open;
+
+    QStringList modifiedOpenDocuments(const QString &) const override { return {}; }
+    void saveDocument(const QString &, std::function<void(bool)> done) override { done(true); }
+    bool isOpenAndUnmodified(const QString &path) const override { return open.contains(path); }
+    void reloadDocument(const QString &) override {}
+    QStringList openDocumentsIn(const QString &folder) const override
+    {
+        QStringList inside;
+        const QString prefix = QDir::cleanPath(folder) + QLatin1Char('/');
+        for (const QString &path : open) {
+            if (QDir::cleanPath(path).startsWith(prefix, Qt::CaseInsensitive)) {
+                inside << path;
+            }
+        }
+        return inside;
+    }
+    QStringList unsavedForeignDocuments(const QString &) const override { return {}; }
+};
 
 /// Server projects that each offer the folder "ui".
 void serveProjects(KisVersioningFakeDriver &driver, const QVector<ProjectInfo> &projects)
@@ -525,6 +551,8 @@ void ProjectsModelTest::testTickingFolderDownloadsProject()
     QCOMPARE(projects.first().info.id, QStringLiteral("p2"));
     QCOMPARE(projects.first().localPath, localPath);
     QCOMPARE(projects.first().folders, QStringList{QStringLiteral("ui")});
+    // What the driver left out is kept: it is what the list shows unticked.
+    QCOMPARE(projects.first().leftOut, QStringList{QStringLiteral("art")});
 
     // The downloaded project takes the place of the remote one.
     QCOMPARE(model.rowCount(), 1);
@@ -541,6 +569,7 @@ void ProjectsModelTest::testTickingFolderDownloadsProject()
     QCOMPARE(f.driver.callsNamed(QStringLiteral("setFolders")).first().args,
              (QStringList{localPath, QStringLiteral("ui,art")}));
     QCOMPARE(f.settings.projects().first().folders, (QStringList{QStringLiteral("ui"), QStringLiteral("art")}));
+    QVERIFY(f.settings.projects().first().leftOut.isEmpty());
     QCOMPARE(f.driver.callCount(QStringLiteral("downloadProject")), 1);
 }
 
@@ -650,7 +679,8 @@ void ProjectsModelTest::testSecondTickWaitsForTheFirst()
 
     // The download ends; the refresh that would show it has not landed yet.
     const QPointer<KisVersioningJob> download = driver.held.first();
-    download->finish();
+    // As a driver does, it says which folders of the server it left out.
+    download->finish(QVariant::fromValue(QStringList{QStringLiteral("art")}));
     QCoreApplication::sendPostedEvents(download, QEvent::MetaCall);
     QCOMPARE(f.settings.projects().size(), 1);
 
@@ -826,6 +856,141 @@ void ProjectsModelTest::testDestroyedWhileRefreshingIsSafe()
     for (const QPointer<KisVersioningJob> &job : std::as_const(driver.held)) {
         QVERIFY(!job); // ended and deleted itself, with nobody listening
     }
+}
+
+void ProjectsModelTest::testFileOutsideTheChoiceIsShownAndCounted()
+{
+    Fixture f;
+    f.driver.setCapabilities(RemoteProjects | PartialDownload);
+    f.write(QStringLiteral("game/ui/botao.kra"));
+    f.write(QStringLiteral("game/raiz.kra"));
+    // Made here: a file in a folder the driver left out, and a folder the server does not have.
+    f.write(QStringLiteral("game/concepts/meu.kra"));
+    f.write(QStringLiteral("game/icons/novo.kra"));
+    KisVersioningSettings::Project project;
+    project.driverId = QStringLiteral("fake");
+    project.info = ProjectInfo{QStringLiteral("game"), QStringLiteral("game"), QString()};
+    project.localPath = f.path(QStringLiteral("game"));
+    project.folders = QStringList{QStringLiteral("ui")};
+    project.leftOut = QStringList{QStringLiteral("concepts")};
+    f.settings.addProject(project);
+    f.driver.setProjects({project.info});
+    f.driver.setProjectFolders(QStringLiteral("game"), {QStringLiteral("concepts"), QStringLiteral("ui")});
+    f.driver.setStatus(statusWith(QStringLiteral("icons/novo.kra"), FileState::Added));
+    ProjectsModel model(&f.driver, &f.settings);
+    QVERIFY(refreshAndWait(model));
+
+    // Never sent, and said so.
+    const QModelIndex mine = findPath(model, f.path(QStringLiteral("game/concepts/meu.kra")));
+    QVERIFY(mine.isValid());
+    QVERIFY(mine.data(ProjectsModel::OutsideRole).toBool());
+    QCOMPARE(notice(mine), QStringLiteral("not sent: outside your folders"));
+    QCOMPARE(findPath(model, f.path(QStringLiteral("game/concepts"))).data(ProjectsModel::CheckedFolderRole).toBool(), false);
+
+    // The folder made here is sent like any other: it shows what the driver says of it.
+    const QModelIndex fresh = findPath(model, f.path(QStringLiteral("game/icons/novo.kra")));
+    QVERIFY(!fresh.data(ProjectsModel::OutsideRole).toBool());
+    QCOMPARE(notice(fresh), QStringLiteral("new"));
+    QVERIFY(!findPath(model, f.path(QStringLiteral("game/ui/botao.kra"))).data(ProjectsModel::OutsideRole).toBool());
+    QVERIFY(!findPath(model, f.path(QStringLiteral("game/raiz.kra"))).data(ProjectsModel::OutsideRole).toBool());
+    QCOMPARE(findPath(model, f.path(QStringLiteral("game/ui"))).data(ProjectsModel::CheckedFolderRole).toBool(), true);
+
+    QCOMPARE(model.summaryText(), QString::fromUtf8("1 file changed \u00b7 1 file outside your folders"));
+}
+
+void ProjectsModelTest::testFoldersNotLeftOutStayInTheChoice()
+{
+    Fixture f;
+    f.driver.setCapabilities(RemoteProjects | PartialDownload);
+    f.write(QStringLiteral("game/ui/botao.kra"));
+    f.write(QStringLiteral("game/icons/novo.kra"));
+    KisVersioningSettings::Project project;
+    project.driverId = QStringLiteral("fake");
+    project.info = ProjectInfo{QStringLiteral("game"), QStringLiteral("game"), QString()};
+    project.localPath = f.path(QStringLiteral("game"));
+    project.folders = QStringList{QStringLiteral("ui")};
+    project.leftOut = QStringList{QStringLiteral("concepts")};
+    f.settings.addProject(project);
+    f.driver.setProjects({project.info});
+    // "icons" was made here and sent since: the server has it, and the driver never left it out.
+    f.driver.setProjectFolders(QStringLiteral("game"),
+                               {QStringLiteral("concepts"), QStringLiteral("icons"), QStringLiteral("ui")});
+    f.driver.setLocalProject(project.localPath, QStringLiteral("game"));
+    ProjectsModel model(&f.driver, &f.settings);
+    QVERIFY(refreshAndWait(model));
+    QCOMPARE(findPath(model, f.path(QStringLiteral("game/icons"))).data(ProjectsModel::CheckedFolderRole).toBool(), true);
+
+    // Ticking another folder keeps it: the driver is given every folder shown ticked.
+    QSignalSpy spy(&model, &ProjectsModel::refreshed);
+    QVERIFY(model.setData(findPath(model, f.path(QStringLiteral("game/concepts"))), Qt::Checked, Qt::CheckStateRole));
+    QVERIFY(spy.wait(5000));
+    QCOMPARE(f.driver.callsNamed(QStringLiteral("setFolders")).first().args,
+             (QStringList{f.path(QStringLiteral("game")), QStringLiteral("icons,ui,concepts")}));
+    QVERIFY(f.settings.projects().first().leftOut.isEmpty());
+    for (const QString &folder : {QStringLiteral("concepts"), QStringLiteral("icons"), QStringLiteral("ui")}) {
+        QCOMPARE(findPath(model, f.path(QStringLiteral("game/") + folder)).data(ProjectsModel::CheckedFolderRole).toBool(),
+                 true);
+    }
+}
+
+void ProjectsModelTest::testUntickRefusedWhileADocumentOfTheFolderIsOpen()
+{
+    Fixture f;
+    addRemoteGame(f);
+    OpenDocuments documents;
+    documents.open << f.path(QStringLiteral("game/art/heroi.kra"));
+    ProjectsModel model(&f.driver, &f.settings, &documents);
+    QVERIFY(refreshAndWait(model));
+
+    // Open, with or without changes: the folder stays chosen, and the artist is told why.
+    QSignalSpy failures(&model, &ProjectsModel::operationFailed);
+    QVERIFY(!model.setData(findPath(model, f.path(QStringLiteral("game/art"))), Qt::Unchecked, Qt::CheckStateRole));
+    QCOMPARE(failures.size(), 1);
+    QCOMPARE(failures.first().first().toString(), QStringLiteral("Close heroi.kra before removing art from your choice."));
+    QCOMPARE(f.driver.callCount(QStringLiteral("setFolders")), 0);
+    QCOMPARE(f.settings.projects().first().folders, (QStringList{QStringLiteral("ui"), QStringLiteral("art")}));
+
+    // Opened while the state was being asked: still refused.
+    documents.open.clear();
+    f.driver.setHeld(QStringLiteral("status"), true);
+    QVERIFY(model.setData(findPath(model, f.path(QStringLiteral("game/art"))), Qt::Unchecked, Qt::CheckStateRole));
+    QTRY_COMPARE(f.driver.heldCount(QStringLiteral("status")), 1);
+    documents.open << f.path(QStringLiteral("game/art/heroi.kra"));
+    f.driver.setHeld(QStringLiteral("status"), false);
+    f.driver.releaseHeld(QStringLiteral("status"));
+    QTRY_COMPARE(failures.size(), 2);
+    QCOMPARE(f.driver.callCount(QStringLiteral("setFolders")), 0);
+
+    // Closed: it goes ahead. A document elsewhere does not stop it.
+    documents.open = QStringList{f.path(QStringLiteral("game/ui/botao.kra"))};
+    QTRY_VERIFY(!model.isBusy());
+    QVERIFY(model.setData(findPath(model, f.path(QStringLiteral("game/art"))), Qt::Unchecked, Qt::CheckStateRole));
+    QTRY_COMPARE(f.driver.callCount(QStringLiteral("setFolders")), 1);
+    QCOMPARE(f.driver.callsNamed(QStringLiteral("setFolders")).first().args,
+             (QStringList{f.path(QStringLiteral("game")), QStringLiteral("ui")}));
+    QTRY_COMPARE(f.settings.projects().first().leftOut, QStringList{QStringLiteral("art")});
+}
+
+void ProjectsModelTest::testLastFolderCannotBeUnticked()
+{
+    Fixture f;
+    addRemoteGame(f);
+    KisVersioningSettings::Project project = f.settings.projects().first();
+    f.settings.setFolders(project.localPath, {QStringLiteral("ui")}, {QStringLiteral("art")});
+    ProjectsModel model(&f.driver, &f.settings);
+    QVERIFY(refreshAndWait(model));
+    const QModelIndex ui = findPath(model, f.path(QStringLiteral("game/ui")));
+    QCOMPARE(ui.data(ProjectsModel::CheckedFolderRole).toBool(), true);
+
+    // No folder left would mean the whole project to the driver: the last one stays.
+    QSignalSpy failures(&model, &ProjectsModel::operationFailed);
+    QVERIFY(!model.setData(ui, Qt::Unchecked, Qt::CheckStateRole));
+    QCOMPARE(failures.size(), 1);
+    QCOMPARE(failures.first().first().toString(), QStringLiteral("Keep at least one folder of game on this computer."));
+    QTest::qWait(50);
+    QCOMPARE(f.driver.callCount(QStringLiteral("setFolders")), 0);
+    QCOMPARE(f.settings.projects().first().folders, QStringList{QStringLiteral("ui")});
+    QCOMPARE(findPath(model, f.path(QStringLiteral("game/ui"))).data(ProjectsModel::CheckedFolderRole).toBool(), true);
 }
 
 void ProjectsModelTest::testRunnerWaitsForEachProject()

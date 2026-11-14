@@ -104,6 +104,29 @@ void KisVersioningFakeDriver::setDownloadError(KisVersioningJob::Error error, co
     m_download = failure(error, text);
 }
 
+void KisVersioningFakeDriver::setLocalProject(const QString &localPath, const QString &projectId)
+{
+    m_localProjects.insert(QDir::cleanPath(localPath), projectId);
+}
+
+namespace {
+
+/// What a real driver leaves out: the project's folders not chosen; nothing for the whole project.
+QStringList leftOutOf(const QStringList &projectFolders, const QStringList &chosen)
+{
+    QStringList leftOut;
+    if (!chosen.isEmpty()) {
+        for (const QString &folder : projectFolders) {
+            if (!chosen.contains(folder, Qt::CaseInsensitive)) {
+                leftOut << folder;
+            }
+        }
+    }
+    return leftOut;
+}
+
+} // namespace
+
 void KisVersioningFakeDriver::setSetFoldersError(KisVersioningJob::Error error, const QString &text)
 {
     m_setFolders = failure(error, text);
@@ -229,19 +252,27 @@ KisVersioningJob *KisVersioningFakeDriver::downloadProject(const ProjectInfo &pr
                                                            const QStringList &folders)
 {
     record(QStringLiteral("downloadProject"), {project.id, localPath, folders.join(QLatin1Char(','))});
-    if (m_download.error == KisVersioningJob::NoError) {
+    Outcome outcome = m_download;
+    if (outcome.error == KisVersioningJob::NoError) {
         QDir().mkpath(localPath);
         for (const QString &folder : folders) {
             QDir(localPath).mkpath(folder);
         }
+        setLocalProject(localPath, project.id);
+        outcome.result = QVariant::fromValue(leftOutOf(m_projectFolders.value(project.id), folders));
     }
-    return makeJob(QStringLiteral("downloadProject"), m_download);
+    return makeJob(QStringLiteral("downloadProject"), outcome);
 }
 
 KisVersioningJob *KisVersioningFakeDriver::setFolders(const QString &localPath, const QStringList &folders)
 {
     record(QStringLiteral("setFolders"), {localPath, folders.join(QLatin1Char(','))});
-    return makeJob(QStringLiteral("setFolders"), m_setFolders);
+    Outcome outcome = m_setFolders;
+    if (outcome.error == KisVersioningJob::NoError) {
+        const QString projectId = m_localProjects.value(QDir::cleanPath(localPath));
+        outcome.result = QVariant::fromValue(leftOutOf(m_projectFolders.value(projectId), folders));
+    }
+    return makeJob(QStringLiteral("setFolders"), outcome);
 }
 
 KisVersioningJob *KisVersioningFakeDriver::status(const QString &localPath)

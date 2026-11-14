@@ -40,7 +40,6 @@ public:
     KisVersioningJob *listFolders(const KisVersioning::ProjectInfo &project) override;
     KisVersioningJob *downloadProject(const KisVersioning::ProjectInfo &project,
                                       const QString &localPath, const QStringList &folders) override;
-    /// An empty list means the whole project.
     KisVersioningJob *setFolders(const QString &localPath, const QStringList &folders) override;
     KisVersioningJob *status(const QString &localPath) override;
     KisVersioningJob *synchronise(const QString &localPath, const QString &notes) override;

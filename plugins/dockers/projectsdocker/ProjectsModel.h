@@ -20,18 +20,25 @@
 #include <KisVersioningSettings.h>
 #include <KisVersioningTypes.h>
 
+class ProjectsDocuments;
+
 /**
  * The projects of the panel's driver, as a tree: each project, then its
  * folders and files as they are on disk, with the state of each file.
  *
  * Column 0 holds the name; column 1 the notice shown beside it ("changed",
- * "Bruno editing", "conflict to resolve", or an error for a project).
+ * "Bruno editing", "conflict to resolve", "not sent: outside your folders",
+ * or an error for a project).
  *
  * The downloaded projects come from the settings. With a driver that has
  * RemoteProjects, the projects on the server join them, and the folders the
  * driver lists can be ticked: ticking downloads the folder, unticking removes
- * it from the choice. A project takes one choice at a time; a choice made
- * while the project is busy waits until the list shows the previous one.
+ * it from the choice. A folder is shown ticked unless the driver left it out
+ * of this computer. A file on disk inside a folder the driver left out is never
+ * sent: it is shown as such and counted in the summary. A folder cannot be
+ * unticked while one of its documents is open, nor when it is the last one
+ * ticked. A project takes one choice at a time; a choice made while the
+ * project is busy waits until the list shows the previous one.
  * Files never synchronised and hidden folders (where the drivers keep their
  * own data) are not shown.
  *
@@ -43,9 +50,11 @@ class ProjectsModel : public QAbstractItemModel
 {
     Q_OBJECT
 public:
-    enum Roles { PathRole = Qt::UserRole + 1, StateRole, EditingUserRole, ConflictCopyRole, CheckedFolderRole };
+    enum Roles { PathRole = Qt::UserRole + 1, StateRole, EditingUserRole, ConflictCopyRole, CheckedFolderRole, OutsideRole };
 
-    ProjectsModel(KisVersioningDriver *driver, KisVersioningSettings *settings, QObject *parent = nullptr);
+    /// @p documents (which may be null) tells which documents are open.
+    ProjectsModel(KisVersioningDriver *driver, KisVersioningSettings *settings, ProjectsDocuments *documents = nullptr,
+                  QObject *parent = nullptr);
     ~ProjectsModel() override;
 
     void refresh();                                  // status + whoIsEditing of each project
@@ -114,18 +123,24 @@ private:
     void startWaitingChoice(const QString &projectId);
     bool storedProject(const QString &projectId, KisVersioningSettings::Project *project) const;
     QString freeFolderFor(const KisVersioning::ProjectInfo &info) const;
-    void runProjectJob(const QString &projectId, KisVersioningJob *job, const std::function<void()> &onSuccess);
+    /// The folders of a downloaded project shown ticked: those of the server the driver did not leave out.
+    QStringList keptFolders(const KisVersioningSettings::Project &stored) const;
+    /// Why @p folder of @p stored may not be unticked now; empty when it may.
+    QString untickRefusal(const KisVersioningSettings::Project &stored, const QString &folder) const;
+    void runProjectJob(const QString &projectId, KisVersioningJob *job, const std::function<void(KisVersioningJob *)> &onSuccess);
     void releaseAfterRefresh(const QString &projectId);
     void setBusy(const QString &projectId, bool busy);
 
     KisVersioningDriver *m_driver;
     KisVersioningSettings *m_settings;
+    ProjectsDocuments *m_documents;
     std::shared_ptr<Refresh> m_refresh;
     std::vector<Project> m_projects;
     std::unique_ptr<Node> m_root;
     bool m_signInNeeded {false};
     bool m_choicesAllowed {true};
     int m_changedFiles {0};
+    int m_outsideFiles {0};
     int m_incoming {0};
     int m_pendingUpload {0};
     /// Projects with an operation under way, or whose operation the list does not show yet.

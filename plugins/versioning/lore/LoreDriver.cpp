@@ -43,7 +43,8 @@ bool hasLocalWork(const LoreStatus &status)
     });
 }
 
-/// A rule of a view file for one folder. Characters the rules treat specially are escaped.
+/// A rule of a view file that leaves out one top-level folder. Characters the rules treat
+/// specially are escaped.
 QString viewRuleFor(const QString &folder)
 {
     QString escaped;
@@ -53,26 +54,45 @@ QString viewRuleFor(const QString &folder)
         }
         escaped += c;
     }
-    return QStringLiteral("!/%1/").arg(escaped);
+    return QStringLiteral("/%1/").arg(escaped);
 }
 
 /**
- * Writes the view file for @p folders into @p directory and returns its path, or an empty string.
- * The library copies the file into the project, so it only has to exist during the call. Root
- * files and the .geppetto folder, which holds what everyone must see (such as conflict markers),
- * are always kept. An empty list keeps the whole project.
+ * The top-level folders of the server that a choice leaves out: those not in @p chosen. Folders
+ * whose name starts with a dot (such as .geppetto, which holds what everyone must see) are never
+ * left out. The view rules ignore case, and so does this.
  */
-QString writeViewFile(const QString &directory, const QStringList &folders)
+QStringList foldersLeftOut(const QStringList &serverFolders, const QStringList &chosen)
+{
+    QStringList kept;
+    for (const QString &folder : chosen) {
+        kept << loreRelativePath(folder).toLower();
+    }
+    QStringList leftOut;
+    for (const QString &folder : serverFolders) {
+        const QString name = loreRelativePath(folder);
+        if (name.isEmpty() || name.startsWith(QLatin1Char('.')) || name.contains(QLatin1Char('/'))
+            || kept.contains(name.toLower()) || leftOut.contains(name)) {
+            continue;
+        }
+        leftOut << name;
+    }
+    return leftOut;
+}
+
+/**
+ * Writes the view file that leaves out @p leftOut into @p directory and returns its path, or an
+ * empty string. The library copies the file into the project, so it only has to exist during the
+ * call. Only those folders are left out: root files and any folder that exists only on this
+ * computer stay in the view, so that whatever the artist creates is sent. An empty list keeps the
+ * whole project.
+ */
+QString writeViewFile(const QString &directory, const QStringList &leftOut)
 {
     QStringList lines;
-    lines << QStringLiteral("# The folders chosen for this computer.");
-    if (!folders.isEmpty()) {
-        lines << QStringLiteral("/*/") << QStringLiteral("!/.geppetto/");
-        for (const QString &folder : folders) {
-            if (!loreRelativePath(folder).isEmpty() && loreRelativePath(folder) != QLatin1String(".")) {
-                lines << viewRuleFor(folder);
-            }
-        }
+    lines << QStringLiteral("# The folders of the project left out of this computer.");
+    for (const QString &folder : leftOut) {
+        lines << viewRuleFor(folder);
     }
     const QString path = QDir(directory).filePath(QStringLiteral("view"));
     QFile file(path);
@@ -83,6 +103,19 @@ QString writeViewFile(const QString &directory, const QStringList &folders)
     const bool written = file.write(bytes) == bytes.size();
     file.close();
     return written && file.error() == QFileDevice::NoError ? path : QString();
+}
+
+/// Ends @p op after the folder listing it needed failed: the listing's own words when they are
+/// about the server or the session, @p failText otherwise.
+void failAfterListing(LoreOperation *op, KisVersioningJob *listing, const QString &failText)
+{
+    const KisVersioningJob::Error error = listing->error();
+    if (error == KisVersioningJob::Offline || error == KisVersioningJob::NotSignedIn
+        || error == KisVersioningJob::Cancelled) {
+        op->fail(error, listing->errorText());
+    } else {
+        op->fail(KisVersioningJob::Failed, failText);
+    }
 }
 
 /// Builds a history entry from the events of lore_file_history: each FILE_HISTORY is followed by
@@ -313,59 +346,111 @@ KisVersioningJob *LoreDriver::downloadProject(const ProjectInfo &project, const 
         op->fail(KisVersioningJob::Failed, failText);
         return job;
     }
-    auto viewFolder = std::make_shared<QTemporaryDir>();
-    QString view;
-    if (!folders.isEmpty()) {
-        view = viewFolder->isValid() ? writeViewFile(viewFolder->path(), folders) : QString();
-        if (view.isEmpty()) {
-            op->fail(KisVersioningJob::Failed, failText);
-            return job;
+    auto clone = [op, project, target, failText](const QStringList &leftOut) {
+        auto viewFolder = std::make_shared<QTemporaryDir>();
+        QString view;
+        if (!leftOut.isEmpty()) {
+            view = viewFolder->isValid() ? writeViewFile(viewFolder->path(), leftOut) : QString();
+            if (view.isEmpty()) {
+                op->fail(KisVersioningJob::Failed, failText);
+                return;
+            }
         }
-    }
+        op->requireServer(project.serverAddress, [op, project, target, view, viewFolder, leftOut, failText]() {
+            // The folder is created here, so that nothing is left behind if the download fails.
+            const bool existed = QFileInfo::exists(target);
+            if (!QDir().mkpath(target)) {
+                op->fail(KisVersioningJob::Failed, failText);
+                return;
+            }
+            LoreGlobals g = op->globals();
+            // Every version file is kept in the project's own store, so that a version can be
+            // created with no network.
+            g.cache = true;
+            const QByteArray url = loreRepositoryUrl(project).toUtf8();
+            const QByteArray viewPath = lorePath(view);
+            op->reportProgress(0, 0, i18n("Downloading %1", project.name));
+            op->run(g,
+                [url, viewPath](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
+                    lore_repository_clone_args_t args;
+                    std::memset(&args, 0, sizeof args);
+                    args.repository_url = toLore(url);
+                    args.view = toLore(viewPath);
+                    lore_repository_clone_async(globals, &args, callback);
+                },
+                [op, project](const LoreEvent &event) {
+                    if (event.tag == LORE_EVENT_REPOSITORY_CLONE_PROGRESS) {
+                        op->reportProgress(event.fields.value(QStringLiteral("bytesDone")).toLongLong(),
+                                           event.fields.value(QStringLiteral("bytesTotal")).toLongLong(),
+                                           i18n("Downloading %1", project.name));
+                    }
+                },
+                [op, viewFolder, target, existed, leftOut, failText](int status, const QString &rawText) {
+                    if (status != 0) {
+                        if (!existed) {
+                            QDir(target).removeRecursively();
+                        }
+                        op->failFromLore("download", status, rawText, failText);
+                        return;
+                    }
+                    op->setFlushBeforeEnd(true);
+                    op->finish(QVariant::fromValue(leftOut));
+                });
+        }, failText);
+    };
 
-    op->requireServer(project.serverAddress, [op, project, target, view, viewFolder, failText]() {
-        // The folder is created here, so that nothing is left behind if the download fails.
-        const bool existed = QFileInfo::exists(target);
-        if (!QDir().mkpath(target)) {
-            op->fail(KisVersioningJob::Failed, failText);
+    if (folders.isEmpty()) {
+        clone(QStringList());
+        return job;
+    }
+    // The folders of the server that were not chosen are left out; the others, and any folder made
+    // on this computer later, are kept. The server's folders are read first, without downloading.
+    op->reportProgress(0, 0, i18n("Downloading %1", project.name));
+    KisVersioningJob *listing = listFolders(project);
+    QObject::connect(listing, &KisVersioningJob::finished, op, [op, folders, clone, failText](KisVersioningJob *listed) {
+        if (listed->error() != KisVersioningJob::NoError) {
+            failAfterListing(op, listed, failText);
             return;
         }
-        LoreGlobals g = op->globals();
-        // Every version file is kept in the project's own store, so that a version can be created
-        // with no network.
-        g.cache = true;
-        const QByteArray url = loreRepositoryUrl(project).toUtf8();
-        const QByteArray viewPath = lorePath(view);
-        op->reportProgress(0, 0, i18n("Downloading %1", project.name));
-        op->run(g,
-            [url, viewPath](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
-                lore_repository_clone_args_t args;
-                std::memset(&args, 0, sizeof args);
-                args.repository_url = toLore(url);
-                args.view = toLore(viewPath);
-                lore_repository_clone_async(globals, &args, callback);
-            },
-            [op, project](const LoreEvent &event) {
-                if (event.tag == LORE_EVENT_REPOSITORY_CLONE_PROGRESS) {
-                    op->reportProgress(event.fields.value(QStringLiteral("bytesDone")).toLongLong(),
-                                       event.fields.value(QStringLiteral("bytesTotal")).toLongLong(),
-                                       i18n("Downloading %1", project.name));
-                }
-            },
-            [op, viewFolder, target, existed, failText](int status, const QString &rawText) {
-                if (status != 0) {
-                    if (!existed) {
-                        QDir(target).removeRecursively();
-                    }
-                    op->failFromLore("download", status, rawText, failText);
-                    return;
-                }
-                op->setFlushBeforeEnd(true);
-                op->finish();
-            });
-    }, failText);
+        clone(foldersLeftOut(listed->result<QStringList>(), folders));
+    });
     return job;
 }
+
+namespace {
+
+/// Puts into effect the view that leaves out @p leftOut, and ends the job with that list.
+void applyView(LoreOperation *op, const QStringList &leftOut, const QString &failText)
+{
+    auto viewFolder = std::make_shared<QTemporaryDir>();
+    const QString view = viewFolder->isValid() ? writeViewFile(viewFolder->path(), leftOut) : QString();
+    if (view.isEmpty()) {
+        op->fail(KisVersioningJob::Failed, failText);
+        return;
+    }
+    if (op->stopIfCancelled()) {
+        return;
+    }
+    const QByteArray viewPath = lorePath(view);
+    op->reportProgress(0, 0, i18n("Changing the folders kept on this computer"));
+    op->run(op->globals(),
+        [viewPath](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
+            lore_revision_sync_args_t args;
+            std::memset(&args, 0, sizeof args);
+            args.view = toLore(viewPath);
+            lore_revision_sync_async(globals, &args, callback);
+        },
+        nullptr,
+        [op, viewFolder, leftOut, failText](int code, const QString &rawText) {
+            if (code != 0) {
+                op->failFromLore("changing folders", code, rawText, failText);
+                return;
+            }
+            op->finish(QVariant::fromValue(leftOut));
+        });
+}
+
+} // namespace
 
 KisVersioningJob *LoreDriver::setFolders(const QString &localPath, const QStringList &folders)
 {
@@ -376,19 +461,13 @@ KisVersioningJob *LoreDriver::setFolders(const QString &localPath, const QString
     }
     op->setFlushBeforeEnd(true);
     const QString failText = i18n("Could not change the folders kept on this computer.");
-    auto viewFolder = std::make_shared<QTemporaryDir>();
-    const QString view = viewFolder->isValid() ? writeViewFile(viewFolder->path(), folders) : QString();
-    if (view.isEmpty()) {
-        op->fail(KisVersioningJob::Failed, failText);
-        return job;
-    }
 
     // Changing the folders receives the latest versions too, through the library's plain sync,
     // which would merge text by itself and create the merged version with nobody told. It only
     // runs on a project with nothing of this computer waiting: no change on disk, no version not
     // sent, no merge open.
-    op->requireProjectServer([op, viewFolder, view, failText]() {
-        op->runStatus(true, [op, viewFolder, view, failText](const LoreStatus &status) {
+    op->requireProjectServer([op, folders, failText]() {
+        op->runStatus(true, [op, folders, failText](const LoreStatus &status) {
             if (op->stopIfCancelled()) {
                 return;
             }
@@ -400,22 +479,47 @@ KisVersioningJob *LoreDriver::setFolders(const QString &localPath, const QString
                 op->fail(KisVersioningJob::Offline, LoreText::forProblem(LoreProblem::Offline, failText));
                 return;
             }
-            const QByteArray viewPath = lorePath(view);
-            op->reportProgress(0, 0, i18n("Changing the folders kept on this computer"));
+            if (folders.isEmpty()) {
+                applyView(op, QStringList(), failText);
+                return;
+            }
+            // Only the folders of the server that were not chosen are left out. The project's
+            // address on the server is its server and its identifier: the folder kept here does
+            // not record its name.
+            auto server = std::make_shared<QString>();
             op->run(op->globals(),
-                [viewPath](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
-                    lore_revision_sync_args_t args;
+                [](const lore_global_args_t *globals, lore_event_callback_config_t callback) {
+                    static const QByteArray key("remote_url");
+                    lore_repository_config_get_args_t args;
                     std::memset(&args, 0, sizeof args);
-                    args.view = toLore(viewPath);
-                    lore_revision_sync_async(globals, &args, callback);
+                    args.key = toLore(key);
+                    lore_repository_config_get_async(globals, &args, callback);
                 },
-                nullptr,
-                [op, viewFolder, failText](int code, const QString &rawText) {
-                    if (code != 0) {
-                        op->failFromLore("changing folders", code, rawText, failText);
+                [server](const LoreEvent &event) {
+                    if (event.tag == LORE_EVENT_REPOSITORY_CONFIG_GET
+                        && event.fields.value(QStringLiteral("key")).toString() == QLatin1String("remote_url")) {
+                        *server = event.fields.value(QStringLiteral("value")).toString();
+                    }
+                },
+                [op, status, folders, server, failText](int code, const QString &rawText) {
+                    if (code != 0 || server->isEmpty() || status.repository.isEmpty()) {
+                        op->failFromLore("reading the server address", code ? code : -1, rawText, failText);
                         return;
                     }
-                    op->finish();
+                    ProjectInfo project;
+                    project.id = status.repository;
+                    project.name = status.repository;
+                    project.serverAddress = *server;
+                    KisVersioningJob *listing = startLoreFolderListing(op->settings(), project);
+                    QObject::connect(listing, &KisVersioningJob::finished, op,
+                                     [op, folders, failText](KisVersioningJob *listed) {
+                                         if (listed->error() != KisVersioningJob::NoError) {
+                                             failAfterListing(op, listed, failText);
+                                             return;
+                                         }
+                                         applyView(op, foldersLeftOut(listed->result<QStringList>(), folders),
+                                                   failText);
+                                     });
                 });
         }, failText);
     }, failText);

@@ -206,6 +206,8 @@ void LoreOperation::runStatus(bool scan, const std::function<void(const LoreStat
         [status](const LoreEvent &event) {
             const QVariantMap &f = event.fields;
             if (event.tag == LORE_EVENT_REPOSITORY_STATUS_REVISION) {
+                status->repository = f.value(QStringLiteral("repository")).toString();
+                status->remoteRevision = f.value(QStringLiteral("remoteRevision")).toString();
                 status->branchName = f.value(QStringLiteral("branchName")).toString();
                 status->revision = f.value(QStringLiteral("revision")).toString();
                 status->number = f.value(QStringLiteral("number")).toULongLong();

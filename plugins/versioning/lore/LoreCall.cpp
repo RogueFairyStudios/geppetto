@@ -178,11 +178,13 @@ LoreEvent convert(const lore_event_t *e)
         break;
     case LORE_EVENT_REPOSITORY_STATUS_REVISION: {
         const lore_repository_status_revision_event_data_t &d = e->repository_status_revision;
+        f.insert(QStringLiteral("repository"), hex(d.repository));
         f.insert(QStringLiteral("branchName"), fromLore(d.branch_name));
         f.insert(QStringLiteral("revision"), hex(d.revision));
         f.insert(QStringLiteral("number"), number(d.revision_number));
         f.insert(QStringLiteral("localNumber"), number(d.revision_local_number));
         f.insert(QStringLiteral("remoteNumber"), number(d.revision_remote_number));
+        f.insert(QStringLiteral("remoteRevision"), hex(d.revision_remote));
         f.insert(QStringLiteral("localAhead"), d.is_local_ahead != 0);
         f.insert(QStringLiteral("remoteAhead"), d.is_remote_ahead != 0);
         f.insert(QStringLiteral("remoteAvailable"), d.remote_available != 0);
@@ -202,6 +204,10 @@ LoreEvent convert(const lore_event_t *e)
         f.insert(QStringLiteral("dirty"), d.flag_dirty != 0);
         break;
     }
+    case LORE_EVENT_REPOSITORY_CONFIG_GET:
+        f.insert(QStringLiteral("key"), fromLore(e->repository_config_get.key));
+        f.insert(QStringLiteral("value"), fromLore(e->repository_config_get.value));
+        break;
     case LORE_EVENT_FILE_HISTORY:
         f.insert(QStringLiteral("revision"), hex(e->file_history.revision));
         f.insert(QStringLiteral("number"), number(e->file_history.revision_number));

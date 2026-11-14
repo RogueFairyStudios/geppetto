@@ -49,7 +49,20 @@ QJsonObject toJson(const KisVersioningSettings::Project &p)
         {"serverAddress", p.info.serverAddress},
         {"localPath", p.localPath},
         {"folders", QJsonArray::fromStringList(p.folders)},
+        {"leftOut", QJsonArray::fromStringList(p.leftOut)},
     };
+}
+
+QStringList stringsOf(const QJsonValue &value)
+{
+    QStringList strings;
+    const QJsonArray array = value.toArray();
+    for (const QJsonValue &item : array) {
+        if (item.isString()) {
+            strings << item.toString();
+        }
+    }
+    return strings;
 }
 
 KisVersioningSettings::Project fromJson(const QJsonObject &o)
@@ -60,15 +73,8 @@ KisVersioningSettings::Project fromJson(const QJsonObject &o)
     p.info.name = o.value("name").toString();
     p.info.serverAddress = o.value("serverAddress").toString();
     p.localPath = o.value("localPath").toString();
-    const QJsonValue folders = o.value("folders");
-    if (folders.isArray()) {
-        const QJsonArray array = folders.toArray();
-        for (const QJsonValue &f : array) {
-            if (f.isString()) {
-                p.folders << f.toString();
-            }
-        }
-    }
+    p.folders = stringsOf(o.value("folders"));
+    p.leftOut = stringsOf(o.value("leftOut"));
     return p;
 }
 
@@ -184,13 +190,14 @@ void KisVersioningSettings::removeProject(const QString &localPath)
     }
 }
 
-void KisVersioningSettings::setFolders(const QString &localPath, const QStringList &folders)
+void KisVersioningSettings::setFolders(const QString &localPath, const QStringList &folders, const QStringList &leftOut)
 {
     const QString key = pathKey(localPath);
     QVector<Project> list = projects();
     for (Project &p : list) {
         if (pathKey(p.localPath) == key) {
             p.folders = folders;
+            p.leftOut = leftOut;
             storeProjects(list);
             return;
         }

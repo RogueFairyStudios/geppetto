@@ -39,6 +39,10 @@ private Q_SLOTS:
     void testOtherDriversProjectIsLeftAlone();
     void testConflictResolvedRemovesOnlyTheMarker();
     void testDestroyedWhileRefreshingIsSafe();
+    void testFileOutsideTheChoiceIsShownAndCounted();
+    void testFoldersNotLeftOutStayInTheChoice();
+    void testUntickRefusedWhileADocumentOfTheFolderIsOpen();
+    void testLastFolderCannotBeUnticked();
 
     void testRunnerWaitsForEachProject();
     void testRunnerGoesOnAfterAFailure();
