@@ -168,9 +168,16 @@ public:
     }
 
 private:
-    QStringList &unsent()
+    /// A version was created here: it waits to be sent, with the files in it.
+    void recordUnsentVersion(const QStringList &paths)
     {
-        return settings().memory->unsent[projectPath()];
+        LoreUnsent unsent = readLoreUnsent(projectPath());
+        ++unsent.versions;
+        appendUnique(&unsent.paths, paths);
+        if (!writeLoreUnsent(projectPath(), unsent)) {
+            // This run still reports the work as waiting; a state read with no network may not.
+            qWarning("Lore: could not record the versions not sent yet in %s", qUtf8Printable(projectPath()));
+        }
     }
 
     QSet<QString> &keptAfterMerge()
@@ -309,8 +316,7 @@ private:
                     return;
                 }
                 m_committed = true;
-                appendUnique(&unsent(), m_toStage);
-                appendUnique(&unsent(), m_alreadyStaged);
+                recordUnsentVersion(m_toStage + m_alreadyStaged);
                 if (m_mergeInProgress) {
                     keptAfterMerge().clear();
                 }
@@ -321,7 +327,8 @@ private:
     void afterCommit()
     {
         if (!m_status.remoteAvailable) {
-            m_result.pendingUpload = m_committed || !unsent().isEmpty();
+            // Versions made here before, in this run of the application or an earlier one, wait too.
+            m_result.pendingUpload = m_committed || !readLoreUnsent(projectPath()).isEmpty();
             finish(QVariant::fromValue(m_result));
             return;
         }
@@ -350,9 +357,12 @@ private:
             [this, label](const LoreEvent &event) { reportBytes(event, LORE_EVENT_BRANCH_PUSH_FRAGMENT_PROGRESS, label); },
             [this](int status, const QString &rawText) {
                 if (status == 0) {
-                    m_result.sent = unsent();
+                    m_result.sent = readLoreUnsent(projectPath()).paths;
                     m_result.sent.sort();
-                    unsent().clear();
+                    if (!writeLoreUnsent(projectPath(), LoreUnsent())) {
+                        qWarning("Lore: could not clear the record of versions not sent in %s",
+                                 qUtf8Printable(projectPath()));
+                    }
                     m_result.pendingUpload = false;
                     finish(QVariant::fromValue(m_result));
                     return;

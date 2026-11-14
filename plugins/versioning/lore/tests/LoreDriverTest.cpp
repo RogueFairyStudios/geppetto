@@ -798,11 +798,27 @@ void LoreDriverTest::testSynchroniseAndStatusWithoutNetwork()
     QVERIFY(offline.result.value<SyncResult>().pendingUpload);
     QVERIFY(offline.result.value<SyncResult>().divergences.isEmpty());
 
-    // The state is read from this computer: nothing changed on disk, nothing counted on the server.
+    // The state is read from this computer: nothing changed on disk, nothing counted on the server,
+    // and the version that was not sent is counted.
     const Outcome state = run(driver.status(project));
     VERIFY_OK(state);
     QVERIFY(state.result.value<ProjectStatus>().files.isEmpty());
     QCOMPARE(state.result.value<ProjectStatus>().incoming, 0);
+    QCOMPARE(state.result.value<ProjectStatus>().pendingUpload, 1);
+
+    // The application restarts, still with no network: the driver remembers nothing, the project
+    // does. Its state and a synchronisation with nothing new both say that work is waiting.
+    {
+        LoreDriver restarted;
+        restarted.setIdentityForTesting(QStringLiteral("A"));
+        restarted.setOfflineForTesting(true);
+        const Outcome again = run(restarted.status(project));
+        VERIFY_OK(again);
+        QCOMPARE(again.result.value<ProjectStatus>().pendingUpload, 1);
+        const Outcome nothingNew = run(restarted.synchronise(project, QString()));
+        VERIFY_OK(nothingNew);
+        QVERIFY(nothingNew.result.value<SyncResult>().pendingUpload);
+    }
 
     // With the network back, the server does not have it yet; one synchronisation sends it.
     driver.setOfflineForTesting(false);
@@ -816,6 +832,12 @@ void LoreDriverTest::testSynchroniseAndStatusWithoutNetwork()
     const Outcome after = run(driver.status(project));
     VERIFY_OK(after);
     QCOMPARE(after.result.value<ProjectStatus>().pendingUpload, 0);
+
+    // Sent, it is no longer counted with no network either.
+    driver.setOfflineForTesting(true);
+    const Outcome offlineAfter = run(driver.status(project));
+    VERIFY_OK(offlineAfter);
+    QCOMPARE(offlineAfter.result.value<ProjectStatus>().pendingUpload, 0);
 }
 
 SIMPLE_TEST_MAIN(LoreDriverTest)

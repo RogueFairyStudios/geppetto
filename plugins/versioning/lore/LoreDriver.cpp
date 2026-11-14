@@ -443,6 +443,7 @@ KisVersioningJob *LoreDriver::status(const QString &localPath)
             op->setWorkOffline(true);
         }
         op->runStatus(true, [op](const LoreStatus &status) {
+            const QString project = op->projectPath();
             ProjectStatus result;
             for (const LoreStatusFile &file : status.files) {
                 // Files only staged by a merge came from the server; the rest are this computer's.
@@ -460,14 +461,21 @@ KisVersioningJob *LoreDriver::status(const QString &localPath)
             std::sort(result.files.begin(), result.files.end(), [](const FileStatus &a, const FileStatus &b) {
                 return a.path < b.path;
             });
-            // Without network the library does not know the server's state: nothing is counted.
             if (status.remoteAvailable) {
                 if (status.remoteAhead) {
                     result.incoming = int(std::max<qint64>(1, qint64(status.remoteNumber) - qint64(status.number)));
                 }
                 if (status.localAhead) {
                     result.pendingUpload = int(std::max<qint64>(1, qint64(status.localNumber) - qint64(status.remoteNumber)));
+                } else if (!readLoreUnsent(project).isEmpty() && !writeLoreUnsent(project, LoreUnsent())) {
+                    // The server has everything: the record of what waited is out of date.
+                    qWarning("Lore: could not clear the record of versions not sent in %s", qUtf8Printable(project));
                 }
+            } else {
+                // Without network the library knows nothing of the server's side: the versions this
+                // computer made and did not send come from the driver's own record.
+                const LoreUnsent unsent = readLoreUnsent(project);
+                result.pendingUpload = unsent.isEmpty() ? 0 : std::max(1, unsent.versions);
             }
             op->finish(QVariant::fromValue(result));
         }, failText);

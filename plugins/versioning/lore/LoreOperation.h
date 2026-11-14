@@ -73,12 +73,30 @@ private:
 };
 
 /**
+ * What this computer created for a project and did not send yet. The library cannot say it with no
+ * network (it then knows nothing of the server's side), so the driver keeps it in the project's own
+ * Lore folder, where it outlives the application and is never sent itself.
+ */
+struct LoreUnsent {
+    int versions {0};      ///< versions created here and not sent
+    QStringList paths;     ///< the files in them, for SyncResult::sent
+
+    bool isEmpty() const
+    {
+        return versions <= 0 && paths.isEmpty();
+    }
+};
+
+/// A missing or unreadable record counts as nothing unsent.
+LoreUnsent readLoreUnsent(const QString &projectPath);
+/// An empty record removes the file. False when it could not be written.
+bool writeLoreUnsent(const QString &projectPath, const LoreUnsent &unsent);
+
+/**
  * What the driver remembers during a session of the application, per project folder. It is only
- * a help: everything that matters is also in the library's own state on disk.
+ * a help: everything that matters is also on disk.
  */
 struct LoreMemory {
-    /// Paths of versions created on this computer and not yet sent, for SyncResult::sent.
-    QHash<QString, QStringList> unsent;
     /// Paths that Lore merged by itself and the artist chose to keep as they are on disk.
     QHash<QString, QSet<QString>> keptAfterMerge;
 

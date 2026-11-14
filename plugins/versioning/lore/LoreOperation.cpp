@@ -4,7 +4,12 @@
 #include "LoreOperation.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSaveFile>
 #include <QTimer>
 
 #include <algorithm>
@@ -92,6 +97,50 @@ QString loreRepositoryUrl(const KisVersioning::ProjectInfo &project)
 bool isLoreProject(const QString &localPath)
 {
     return QFileInfo(QDir(localPath).filePath(QStringLiteral(".lore"))).isDir();
+}
+
+namespace {
+
+QString unsentRecordPath(const QString &projectPath)
+{
+    return QDir(projectPath).filePath(QStringLiteral(".lore/geppetto-unsent.json"));
+}
+
+} // namespace
+
+LoreUnsent readLoreUnsent(const QString &projectPath)
+{
+    LoreUnsent unsent;
+    QFile file(unsentRecordPath(projectPath));
+    if (!file.open(QIODevice::ReadOnly)) {
+        return unsent;
+    }
+    const QJsonObject object = QJsonDocument::fromJson(file.readAll()).object();
+    unsent.versions = std::max(0, object.value(QLatin1String("versions")).toInt());
+    const QJsonArray paths = object.value(QLatin1String("paths")).toArray();
+    for (const QJsonValue &path : paths) {
+        if (path.isString() && !unsent.paths.contains(path.toString())) {
+            unsent.paths << path.toString();
+        }
+    }
+    return unsent;
+}
+
+bool writeLoreUnsent(const QString &projectPath, const LoreUnsent &unsent)
+{
+    const QString path = unsentRecordPath(projectPath);
+    if (unsent.isEmpty()) {
+        return !QFileInfo::exists(path) || QFile::remove(path);
+    }
+    QJsonObject object;
+    object.insert(QLatin1String("versions"), std::max(1, unsent.versions));
+    object.insert(QLatin1String("paths"), QJsonArray::fromStringList(unsent.paths));
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        return false;
+    }
+    file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
+    return file.commit();
 }
 
 LoreOperation::LoreOperation(KisVersioningJob *job, const LoreSettings &settings, const QString &projectPath)
