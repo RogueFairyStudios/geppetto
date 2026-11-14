@@ -1,7 +1,6 @@
-DO NOT ISSUE PULL REQUESTS ON GITHUB
+This is Geppetto, Rogue Fairy Studios' fork of Krita.
 
-GitHub is only a mirror. Our real development happens on
-the KDE infrastructure. Post diffs and Merge requests
-against Krita here:
-
-https://invent.kde.org/graphics/krita
+- For a change to Krita itself, please contribute where Krita is
+  developed: https://invent.kde.org/graphics/krita
+- For a change specific to Geppetto, describe below what it does
+  and how you tested it.
