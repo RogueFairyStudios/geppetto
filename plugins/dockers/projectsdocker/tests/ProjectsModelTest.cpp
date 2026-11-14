@@ -169,6 +169,7 @@ public:
     void saveDocument(const QString &, std::function<void(bool)> done) override { held.append(done); }
     bool isOpenAndUnmodified(const QString &path) const override { return openUnmodified.contains(path); }
     void reloadDocument(const QString &) override {}
+    bool savedSince(const QString &, const QDateTime &) const override { return false; }
 };
 
 /// A driver whose downloadProject() jobs only end when the test ends them.
@@ -212,6 +213,7 @@ public:
     void saveDocument(const QString &, std::function<void(bool)> done) override { done(true); }
     bool isOpenAndUnmodified(const QString &path) const override { return open.contains(path); }
     void reloadDocument(const QString &) override {}
+    bool savedSince(const QString &, const QDateTime &) const override { return false; }
     QStringList openDocumentsIn(const QString &folder) const override
     {
         QStringList inside;
@@ -1083,6 +1085,10 @@ void ProjectsModelTest::testStaleDocumentsAreTheModifiedOnes()
 
     host.modified.clear();
     QVERIFY(ProjectsSyncRunner::staleDocuments(project, report, host).isEmpty());
+
+    // Saved by the artist while the other version took the file's place: the session says so.
+    report.staleDocuments = QStringList{QStringLiteral("ui/kept-clean.kra")};
+    QCOMPARE(ProjectsSyncRunner::staleDocuments(project, report, host), QStringList{QStringLiteral("ui/kept-clean.kra")});
 }
 
 void ProjectsModelTest::testRunnerReportsStaleDocuments()

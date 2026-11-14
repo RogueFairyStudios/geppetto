@@ -4,6 +4,8 @@
 #ifndef PROJECTSDOCUMENTHOST_H
 #define PROJECTSDOCUMENTHOST_H
 
+#include <QDateTime>
+#include <QHash>
 #include <QList>
 #include <QObject>
 #include <QPointer>
@@ -37,6 +39,8 @@ public:
     void saveDocument(const QString &absolutePath, std::function<void(bool)> done) override;
     bool isOpenAndUnmodified(const QString &absolutePath) const override;
     void reloadDocument(const QString &absolutePath) override;
+    /// From the saves the application reported since this object was made.
+    bool savedSince(const QString &absolutePath, const QDateTime &moment) const override;
     QStringList openDocumentsIn(const QString &folder) const override;
     QStringList unsavedForeignDocuments(const QString &projectPath) const override;
 
@@ -59,6 +63,9 @@ private:
     static QList<KisDocument *> documentsAt(const QString &absolutePath);
     void reloadNow(const QString &absolutePath);
     void reload(const QPointer<KisDocument> &document);
+
+    /// When each file last finished saving (UTC), by the form in which paths are compared.
+    QHash<QString, QDateTime> m_lastSaved;
 };
 
 #endif // PROJECTSDOCUMENTHOST_H

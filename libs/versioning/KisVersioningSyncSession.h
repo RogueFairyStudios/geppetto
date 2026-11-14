@@ -34,6 +34,8 @@ public:
     virtual void saveDocument(const QString &absolutePath, std::function<void(bool)> done) = 0;
     virtual bool isOpenAndUnmodified(const QString &absolutePath) const = 0;
     virtual void reloadDocument(const QString &absolutePath) = 0;
+    /// True when the open document of that file finished saving after @p moment (UTC).
+    virtual bool savedSince(const QString &absolutePath, const QDateTime &moment) const = 0;
 };
 
 /**
@@ -59,6 +61,9 @@ public:
         QStringList received;
         QStringList keptBoth;        ///< files where both sides changed; paths of the originals
         QStringList conflictCopies;  ///< the copies that hold my content, one per entry of keptBoth
+        /// Files replaced by the other version whose open document the artist saved while it was
+        /// being replaced: not reloaded, the window holds work that no file has any more.
+        QStringList staleDocuments;
         bool pendingUpload = false;  ///< something of mine is still not on the server
         KisVersioningJob::Error error = KisVersioningJob::NoError;
         QString errorText;
@@ -83,7 +88,7 @@ private:
     void synchroniseOnce();
     void onSynchronised(KisVersioningJob *job);
     void resolveNext();
-    void runResolve(const QString &path, KisVersioning::Resolution resolution);
+    void runResolve(const QString &path, KisVersioning::Resolution resolution, bool keepBoth = false);
     void onResolved(KisVersioningJob *job);
     void afterResolutions();
     void startKeepBoth(const QString &path);
@@ -106,6 +111,7 @@ private:
     int m_nextDivergence {0};
     QString m_resolvingPath;
     bool m_resolvingTheirs {false};
+    bool m_resolvingKeepBoth {false};   ///< the resolve puts the other version over a file just copied
     QStringList m_reloaded;
     QStringList m_documentsToSave;
     QString m_savingDocument;
@@ -116,6 +122,7 @@ private:
     QString m_keepBothUser;
     qint64 m_keepBothSize {0};
     QDateTime m_keepBothModified;
+    QDateTime m_keepBothMoment;   ///< when the copy of the file began (UTC)
     Report m_report;
 };
 

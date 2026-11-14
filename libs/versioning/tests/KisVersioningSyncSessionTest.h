@@ -28,6 +28,7 @@ private Q_SLOTS:
     void testDestroyedDuringCopyIsSafe();
     void testWorkingFileChangedDuringCopyFails();
     void testSecondKeepBothOfSamePathIsReloaded();
+    void testDocumentSavedWhileKeepingBothIsNotReloaded();
     void testDeleteVersusModifyKeepsTheChange();
     void testServerChangedRetriesUpToThreeTimes();
     void testOfflineIsPendingUpload();

@@ -208,10 +208,11 @@ void KisVersioningSyncSession::resolveNext()
     }
 }
 
-void KisVersioningSyncSession::runResolve(const QString &path, Resolution resolution)
+void KisVersioningSyncSession::runResolve(const QString &path, Resolution resolution, bool keepBoth)
 {
     m_resolvingPath = path;
     m_resolvingTheirs = (resolution == Resolution::Theirs);
+    m_resolvingKeepBoth = keepBoth;
     KisVersioningJob *job = m_driver->resolve(m_projectPath, path, resolution, QString());
     watch(job);
     connect(job, &KisVersioningJob::finished, this, &KisVersioningSyncSession::onResolved);
@@ -224,11 +225,19 @@ void KisVersioningSyncSession::onResolved(KisVersioningJob *job)
         return;
     }
     if (m_resolvingTheirs) {
-        // The file now holds the other version: an open, unchanged document must show it,
-        // or the next save would put mine back over it. Mine is safe in the conflict copy.
-        // The same path may have been reloaded for an earlier version: this one is newer.
-        m_reloaded.removeAll(m_resolvingPath);
-        reloadIfClean(m_resolvingPath);
+        const QString absolute = QDir(m_projectPath).filePath(m_resolvingPath);
+        if (m_resolvingKeepBoth && m_host->savedSince(absolute, m_keepBothMoment)) {
+            // The artist saved the document after its copy was made, and the other version then
+            // took the file's place: the copy holds older work, the window holds the newest. It is
+            // not reloaded, and the artist is told to save it under another name.
+            appendUnique(m_report.staleDocuments, {m_resolvingPath});
+        } else {
+            // The file now holds the other version: an open, unchanged document must show it,
+            // or the next save would put mine back over it. Mine is safe in the conflict copy.
+            // The same path may have been reloaded for an earlier version: this one is newer.
+            m_reloaded.removeAll(m_resolvingPath);
+            reloadIfClean(m_resolvingPath);
+        }
     }
     resolveNext();
 }
@@ -250,6 +259,8 @@ void KisVersioningSyncSession::afterResolutions()
 
 void KisVersioningSyncSession::startKeepBoth(const QString &path)
 {
+    // A save of the document that ends after this moment holds work the copy does not have.
+    m_keepBothMoment = QDateTime::currentDateTimeUtc();
     const QDir root(m_projectPath);
     const int slash = path.lastIndexOf(QLatin1Char('/'));
     const QString folder = slash >= 0 ? path.left(slash + 1) : QString();
@@ -319,14 +330,15 @@ void KisVersioningSyncSession::onCopyFinished(bool ok, const QString &name)
 
     appendUnique(m_report.keptBoth, {path});
     appendUnique(m_report.conflictCopies, {marker.copyPath});
-    runResolve(path, Resolution::Theirs);
+    runResolve(path, Resolution::Theirs, true);
 }
 
 void KisVersioningSyncSession::reloadIfClean(const QString &path)
 {
-    // Asked now, not remembered from the start: the artist may have kept working meanwhile.
+    // Asked now, not remembered from the start: the artist may have kept working meanwhile. A
+    // document whose newest work is in no file is never reloaded.
     const QString absolute = QDir(m_projectPath).filePath(path);
-    if (!m_reloaded.contains(path) && m_host->isOpenAndUnmodified(absolute)) {
+    if (!m_reloaded.contains(path) && !m_report.staleDocuments.contains(path) && m_host->isOpenAndUnmodified(absolute)) {
         m_reloaded << path;
         m_host->reloadDocument(absolute);
     }

@@ -57,6 +57,10 @@ public:
     void reloadDocument(const QString &) override
     {
     }
+    bool savedSince(const QString &, const QDateTime &) const override
+    {
+        return false;
+    }
 };
 
 } // namespace

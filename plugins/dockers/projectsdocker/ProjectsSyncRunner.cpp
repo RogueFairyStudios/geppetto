@@ -40,7 +40,8 @@ QStringList ProjectsSyncRunner::staleDocuments(const QString &projectPath,
     for (const QString &path : open) {
         modified.insert(comparable(path));
     }
-    QStringList stale;
+    // The session already knows those whose newest work it could not keep in a file.
+    QStringList stale = report.staleDocuments;
     const QDir project(projectPath);
     for (const QString &path : report.received + report.keptBoth) {
         if (!stale.contains(path) && modified.contains(comparable(project.filePath(path)))) {

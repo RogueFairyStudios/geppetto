@@ -23,6 +23,10 @@
 ProjectsDocumentHost::ProjectsDocumentHost(QObject *parent)
     : QObject(parent)
 {
+    // Every save the application finishes, the artist's or a synchronisation's.
+    connect(KisPart::instance(), &KisPart::sigDocumentSaved, this, [this](const QString &path) {
+        m_lastSaved.insert(pathKey(path), QDateTime::currentDateTimeUtc());
+    });
 }
 
 ProjectsDocumentHost::~ProjectsDocumentHost() = default;
@@ -173,6 +177,12 @@ void ProjectsDocumentHost::saveDocument(const QString &absolutePath, std::functi
         // folders): no signal follows.
         end(!document->isModified());
     }
+}
+
+bool ProjectsDocumentHost::savedSince(const QString &absolutePath, const QDateTime &moment) const
+{
+    const QDateTime saved = m_lastSaved.value(pathKey(absolutePath));
+    return saved.isValid() && saved > moment;
 }
 
 bool ProjectsDocumentHost::isOpenAndUnmodified(const QString &absolutePath) const

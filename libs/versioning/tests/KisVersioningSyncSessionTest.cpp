@@ -35,6 +35,8 @@ public:
     QList<std::function<void()>> held;  ///< completions waiting for the test, in the order of the saves
     QStringList reloaded;
     QStringList *sharedLog = nullptr;
+    QStringList savedDuringRun;                 ///< documents the artist saved while the session ran
+    mutable QList<QPair<QString, QDateTime>> savedSinceAsked;
 
     QStringList modifiedOpenDocuments(const QString &) const override { return modified; }
     void saveDocument(const QString &absolutePath, std::function<void(bool)> done) override
@@ -72,6 +74,11 @@ public:
         if (sharedLog) {
             sharedLog->append(QStringLiteral("host:reloadDocument ") + absolutePath);
         }
+    }
+    bool savedSince(const QString &absolutePath, const QDateTime &moment) const override
+    {
+        savedSinceAsked.append({absolutePath, moment});
+        return savedDuringRun.contains(absolutePath);
     }
 };
 
@@ -466,6 +473,48 @@ void KisVersioningSyncSessionTest::testSecondKeepBothOfSamePathIsReloaded()
         if (line.startsWith("host:reloadDocument ")) order << "reload";
     }
     QCOMPARE(order, QStringList({"resolve", "reload", "resolve", "reload"}));
+}
+
+void KisVersioningSyncSessionTest::testDocumentSavedWhileKeepingBothIsNotReloaded()
+{
+    // The artist saves the open document after the copy of their version was made, while the
+    // driver puts the other version in place: the window holds what no file has any more.
+    Fixture f;
+    f.driver.setCurrentUser("Bruno");
+    f.write("ui/botao.kra", "mine");
+    f.driver.setTheirContent("ui/botao.kra", "theirs");
+    f.host.openAndUnmodified = QStringList{f.path("ui/botao.kra")};
+    f.host.savedDuringRun = QStringList{f.path("ui/botao.kra")};
+    SyncResult diverged = resultWithDivergence("ui/botao.kra", DivergenceKind::BothModified);
+    diverged.received = QStringList{"ui/botao.kra"};
+    f.driver.queueSyncResult(diverged);
+    SyncResult again;
+    again.received = QStringList{"ui/botao.kra"};
+    f.driver.queueSyncResult(again);
+
+    const QDateTime started = QDateTime::currentDateTimeUtc();
+    const auto report = f.run();
+
+    QCOMPARE(report.error, KisVersioningJob::NoError);
+    QVERIFY(f.host.reloaded.isEmpty());
+    QCOMPARE(report.staleDocuments, QStringList({"ui/botao.kra"}));
+    QCOMPARE(report.keptBoth, QStringList({"ui/botao.kra"}));
+    // Asked about that file, from a moment no earlier than the run.
+    QVERIFY(!f.host.savedSinceAsked.isEmpty());
+    QCOMPARE(f.host.savedSinceAsked.first().first, f.path("ui/botao.kra"));
+    QVERIFY(f.host.savedSinceAsked.first().second >= started);
+
+    // Not saved meanwhile: reloaded as before, and nothing is stale.
+    Fixture g;
+    g.driver.setCurrentUser("Bruno");
+    g.write("ui/botao.kra", "mine");
+    g.driver.setTheirContent("ui/botao.kra", "theirs");
+    g.host.openAndUnmodified = QStringList{g.path("ui/botao.kra")};
+    g.driver.queueSyncResult(resultWithDivergence("ui/botao.kra", DivergenceKind::BothModified));
+    const auto clean = g.run();
+    QCOMPARE(clean.error, KisVersioningJob::NoError);
+    QCOMPARE(g.host.reloaded, QStringList({g.path("ui/botao.kra")}));
+    QVERIFY(clean.staleDocuments.isEmpty());
 }
 
 void KisVersioningSyncSessionTest::testDeleteVersusModifyKeepsTheChange()

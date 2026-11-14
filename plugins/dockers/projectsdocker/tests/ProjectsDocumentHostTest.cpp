@@ -8,6 +8,7 @@
 
 #include <memory>
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -263,6 +264,29 @@ void ProjectsDocumentHostTest::testSaveIntoMissingFolderFails()
     QCOMPARE(outcome->calls, 1);
     QVERIFY(document->isModified());
     QVERIFY(!document->isSaving());
+}
+
+void ProjectsDocumentHostTest::testSavedSinceFollowsTheSaves()
+{
+    QTemporaryDir dir;
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("game"))));
+    const QString path = dir.filePath(QStringLiteral("game/a.kra"));
+    KisDocument *document = openDocument(path, true, true);
+
+    ProjectsDocumentHost host;
+    const QDateTime before = QDateTime::currentDateTimeUtc();
+    QVERIFY(!host.savedSince(path, before.addSecs(-60)));
+    QTest::qWait(20);
+
+    // A save the application finishes, whoever started it, counts from then on.
+    auto outcome = std::make_shared<SaveOutcome>();
+    host.saveDocument(path, recordInto(outcome, path, document));
+    QTRY_COMPARE_WITH_TIMEOUT(outcome->calls, 1, 60000);
+    QVERIFY(outcome->ok);
+    QTRY_VERIFY(host.savedSince(QDir::toNativeSeparators(path), before));
+    QTest::qWait(20);
+    QVERIFY(!host.savedSince(path, QDateTime::currentDateTimeUtc()));
+    QVERIFY(!host.savedSince(dir.filePath(QStringLiteral("game/other.kra")), before));
 }
 
 void ProjectsDocumentHostTest::testReloadDecision()
