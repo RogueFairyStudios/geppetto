@@ -70,6 +70,7 @@ QList<KisDocument *> ProjectsDocumentHost::documentsAt(const QString &absolutePa
 
 QStringList ProjectsDocumentHost::modifiedOpenDocuments(const QString &projectPath) const
 {
+    const QString suffix = KisVersioning::configuredBackupSuffix();
     QStringList paths;
     const QList<QPointer<KisDocument>> documents = KisPart::instance()->documents();
     for (const QPointer<KisDocument> &document : documents) {
@@ -77,7 +78,7 @@ QStringList ProjectsDocumentHost::modifiedOpenDocuments(const QString &projectPa
             continue;
         }
         const QString path = QDir::cleanPath(QDir::fromNativeSeparators(document->path()));
-        if (isInside(path, projectPath) && !KisVersioning::isNeverSynced(QFileInfo(path).fileName())
+        if (isInside(path, projectPath) && !KisVersioning::isNeverSynced(QFileInfo(path).fileName(), suffix)
             && !paths.contains(path)) {
             paths << path;
         }
@@ -103,6 +104,7 @@ QStringList ProjectsDocumentHost::openDocumentsIn(const QString &folder) const
 
 QStringList ProjectsDocumentHost::unsavedForeignDocuments(const QString &projectPath) const
 {
+    const QString suffix = KisVersioning::configuredBackupSuffix();
     QStringList paths;
     const QList<QPointer<KisDocument>> documents = KisPart::instance()->documents();
     for (const QPointer<KisDocument> &document : documents) {
@@ -110,7 +112,7 @@ QStringList ProjectsDocumentHost::unsavedForeignDocuments(const QString &project
             continue;
         }
         const QString path = QDir::cleanPath(QDir::fromNativeSeparators(document->path()));
-        if (isInside(path, projectPath) && !KisVersioning::isNeverSynced(QFileInfo(path).fileName())
+        if (isInside(path, projectPath) && !KisVersioning::isNeverSynced(QFileInfo(path).fileName(), suffix)
             && !paths.contains(path)) {
             paths << path;
         }

@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <functional>
 
+#include <KConfigGroup>
 #include <KSharedConfig>
 #include <klocalizedstring.h>
 
@@ -392,6 +393,15 @@ void ProjectsModelTest::testNeverSyncedFilesAreHidden()
     const QModelIndex ui = findPath(model, f.path(QStringLiteral("game/ui")));
     QCOMPARE(childNames(model, ui), (QStringList{QStringLiteral("botao.kra"), QStringLiteral("menu.kra")}));
     QCOMPARE(model.summaryText(), QStringLiteral("No changes"));
+
+    // Backups named as the artist told Krita to name them are hidden too.
+    KConfigGroup group = KSharedConfig::openConfig()->group(QString());
+    group.writeEntry("backupfilesuffix", QStringLiteral(".bak"));
+    f.write(QStringLiteral("game/ui/botao.kra.bak"));
+    const bool refreshed = refreshAndWait(model);
+    group.deleteEntry("backupfilesuffix");
+    QVERIFY(refreshed);
+    QVERIFY(!findPath(model, f.path(QStringLiteral("game/ui/botao.kra.bak"))).isValid());
 }
 
 void ProjectsModelTest::testMissingProjectFolderShowsError()

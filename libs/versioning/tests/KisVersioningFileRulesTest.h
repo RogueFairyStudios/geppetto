@@ -14,6 +14,7 @@ class KisVersioningFileRulesTest : public QObject
 private Q_SLOTS:
     void initTestCase();
     void testNeverSynced();
+    void testConfiguredBackupSuffix();
     void testConflictCopyName();
     void testDefaultNotes();
     void testMarkersRoundTrip();

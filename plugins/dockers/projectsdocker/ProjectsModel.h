@@ -139,6 +139,7 @@ private:
     std::unique_ptr<Node> m_root;
     bool m_signInNeeded {false};
     bool m_choicesAllowed {true};
+    QString m_backupSuffix;                 ///< Krita's backup suffix, as the last refresh read it
     int m_changedFiles {0};
     int m_outsideFiles {0};
     int m_incoming {0};

@@ -215,7 +215,7 @@ std::map<QString, QString> lastSnapshot(const QVector<Version> &versions)
 
 /// Paths relative to the project, with '/' as the separator, without the version store and the
 /// files that are never synchronised. Links are not followed.
-void collectFiles(const QDir &directory, const QString &prefix, QStringList *paths)
+void collectFiles(const QDir &directory, const QString &prefix, const QString &backupSuffix, QStringList *paths)
 {
     const QFileInfoList entries = directory.entryInfoList(
         QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::NoSymLinks, QDir::Name);
@@ -223,18 +223,18 @@ void collectFiles(const QDir &directory, const QString &prefix, QStringList *pat
         const QString relative = prefix + entry.fileName();
         if (entry.isDir()) {
             if (relative != QLatin1String(versionsFolder)) {
-                collectFiles(QDir(entry.absoluteFilePath()), relative + QLatin1Char('/'), paths);
+                collectFiles(QDir(entry.absoluteFilePath()), relative + QLatin1Char('/'), backupSuffix, paths);
             }
-        } else if (!isNeverSynced(relative)) {
+        } else if (!isNeverSynced(relative, backupSuffix)) {
             paths->append(relative);
         }
     }
 }
 
-QStringList workingFiles(const QString &root)
+QStringList workingFiles(const QString &root, const QString &backupSuffix)
 {
     QStringList paths;
-    collectFiles(QDir(root), QString(), &paths);
+    collectFiles(QDir(root), QString(), backupSuffix, &paths);
     return paths;
 }
 
@@ -342,7 +342,7 @@ Outcome doDownload(const QString &root)
     return Outcome();
 }
 
-Outcome doStatus(const QString &root)
+Outcome doStatus(const QString &root, const QString &backupSuffix)
 {
     QMutexLocker locker(storeMutex());
     if (!isProjectFolder(root)) {
@@ -356,7 +356,7 @@ Outcome doStatus(const QString &root)
     const QDir directory(root);
 
     QMap<QString, FileState> changes;   // sorted by path
-    const QStringList present = workingFiles(root);
+    const QStringList present = workingFiles(root, backupSuffix);
     const QSet<QString> presentSet(present.constBegin(), present.constEnd());
     for (const QString &path : present) {
         QString hash;
@@ -371,7 +371,7 @@ Outcome doStatus(const QString &root)
         }
     }
     for (const auto &known : snapshot) {
-        if (!presentSet.contains(known.first) && !isNeverSynced(known.first)) {
+        if (!presentSet.contains(known.first) && !isNeverSynced(known.first, backupSuffix)) {
             changes.insert(known.first, FileState::Deleted);
         }
     }
@@ -388,7 +388,8 @@ Outcome doStatus(const QString &root)
     return outcome;
 }
 
-Outcome doSynchronise(const QString &root, const QString &author, const QString &notes, const Cancelled &cancelled)
+Outcome doSynchronise(const QString &root, const QString &author, const QString &notes, const QString &backupSuffix,
+                      const Cancelled &cancelled)
 {
     QMutexLocker locker(storeMutex());
     if (!isProjectFolder(root)) {
@@ -413,7 +414,7 @@ Outcome doSynchronise(const QString &root, const QString &author, const QString 
 
     // What changed since the last version.
     QStringList changedPaths;
-    const QStringList present = workingFiles(root);
+    const QStringList present = workingFiles(root, backupSuffix);
     const QSet<QString> presentSet(present.constBegin(), present.constEnd());
     for (const QString &path : present) {
         QString hash;
@@ -427,7 +428,7 @@ Outcome doSynchronise(const QString &root, const QString &author, const QString 
     }
     QStringList deletedPaths;
     for (const auto &known : snapshot) {
-        if (!presentSet.contains(known.first) && !isNeverSynced(known.first)) {
+        if (!presentSet.contains(known.first) && !isNeverSynced(known.first, backupSuffix)) {
             deletedPaths.append(known.first);
         }
     }
@@ -699,14 +700,17 @@ KisVersioningJob *LocalFolderDriver::setFolders(const QString &, const QStringLi
 
 KisVersioningJob *LocalFolderDriver::status(const QString &localPath)
 {
-    return startJob([localPath](const Cancelled &) { return doStatus(localPath); });
+    // The setting is read here, on the interface thread; the worker gets a copy.
+    const QString backupSuffix = configuredBackupSuffix();
+    return startJob([localPath, backupSuffix](const Cancelled &) { return doStatus(localPath, backupSuffix); });
 }
 
 KisVersioningJob *LocalFolderDriver::synchronise(const QString &localPath, const QString &notes)
 {
     const QString author = currentUser();
-    return startJob([localPath, author, notes](const Cancelled &cancelled) {
-        return doSynchronise(localPath, author, notes, cancelled);
+    const QString backupSuffix = configuredBackupSuffix();
+    return startJob([localPath, author, notes, backupSuffix](const Cancelled &cancelled) {
+        return doSynchronise(localPath, author, notes, backupSuffix, cancelled);
     });
 }
 

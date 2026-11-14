@@ -11,6 +11,9 @@
 #include <QTemporaryDir>
 #include <QThreadPool>
 
+#include <KConfigGroup>
+#include <KSharedConfig>
+
 #include <KisVersioningDriverRegistry.h>
 
 #include "LocalFolderDriver.h"
@@ -337,6 +340,34 @@ void LocalFolderDriverTest::testWorkerDoesNotNeedTheJobThreadToProduceDefaultNot
     const QVector<VersionInfo> history = historyOf(&driver, project, "a.kra");
     QCOMPARE(history.size(), 1);
     QCOMPARE(history[0].notes, QString("2 files changed"));
+}
+
+void LocalFolderDriverTest::testBackupsWithTheConfiguredSuffixAreNotSynchronised()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    LocalFolderDriver driver;
+    const QString project = dir.filePath("project");
+    QVERIFY(createProject(&driver, project));
+
+    // The artist told Krita to name its backups ".bak" (the application's configuration is a test one).
+    KConfigGroup group = KSharedConfig::openConfig()->group(QString());
+    group.writeEntry("backupfilesuffix", QStringLiteral(".bak"));
+    QVERIFY(writeFile(project, "ui/botao.kra", "real"));
+    QVERIFY(writeFile(project, "ui/botao.kra.bak", "backup"));
+    QVERIFY(writeFile(project, "ui/botao.kra.1.bak", "numbered backup"));
+    const Outcome state = run(driver.status(project));
+    const Outcome sync = run(driver.synchronise(project, "x"));
+    group.deleteEntry("backupfilesuffix");
+
+    VERIFY_OK(state);
+    QStringList listed;
+    for (const FileStatus &file : state.result.value<ProjectStatus>().files) {
+        listed << file.path;
+    }
+    QCOMPARE(listed, QStringList{"ui/botao.kra"});
+    VERIFY_OK(sync);
+    QCOMPARE(sync.result.value<SyncResult>().sent, QStringList{"ui/botao.kra"});
 }
 
 SIMPLE_TEST_MAIN(LocalFolderDriverTest)

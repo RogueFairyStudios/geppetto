@@ -7,6 +7,8 @@
 #include <QFile>
 #include <QTemporaryDir>
 
+#include <KConfigGroup>
+#include <KSharedConfig>
 #include <klocalizedstring.h>
 
 #include <KisVersioningConflictMarkers.h>
@@ -21,13 +23,27 @@ void KisVersioningFileRulesTest::initTestCase()
 void KisVersioningFileRulesTest::testNeverSynced()
 {
     using namespace KisVersioning;
-    QVERIFY(isNeverSynced(".botao.kra-autosave.kra"));
-    QVERIFY(isNeverSynced("ui/botao.kra-autosave.kra"));
-    QVERIFY(isNeverSynced("ui/botao.kra~"));
+    QVERIFY(isNeverSynced(".botao.kra-autosave.kra", "~"));
+    QVERIFY(isNeverSynced("ui/botao.kra-autosave.kra", "~"));
+    QVERIFY(isNeverSynced("ui/botao.kra~", "~"));
     QVERIFY(isNeverSynced("ui/botao.kra.bak", ".bak"));
-    QVERIFY(!isNeverSynced("ui/botao.kra"));
-    QVERIFY(!isNeverSynced("ui/autosave-notas.txt"));
-    QVERIFY(!isNeverSynced(".geppetto/conflicts/ab12.json"));
+    QVERIFY(!isNeverSynced("ui/botao.kra~", ".bak"));
+    QVERIFY(!isNeverSynced("ui/botao.kra", "~"));
+    QVERIFY(!isNeverSynced("ui/autosave-notas.txt", "~"));
+    QVERIFY(!isNeverSynced(".geppetto/conflicts/ab12.json", "~"));
+}
+
+void KisVersioningFileRulesTest::testConfiguredBackupSuffix()
+{
+    using namespace KisVersioning;
+    // Krita's own setting, in the application's configuration (a test one here).
+    KConfigGroup group = KSharedConfig::openConfig()->group(QString());
+    group.deleteEntry("backupfilesuffix");
+    QCOMPARE(configuredBackupSuffix(), QStringLiteral("~"));
+    group.writeEntry("backupfilesuffix", QStringLiteral(".bak"));
+    QCOMPARE(configuredBackupSuffix(), QStringLiteral(".bak"));
+    QVERIFY(isNeverSynced("ui/botao.kra.bak", configuredBackupSuffix()));
+    group.deleteEntry("backupfilesuffix");
 }
 
 void KisVersioningFileRulesTest::testConflictCopyName()

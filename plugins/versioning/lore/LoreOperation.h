@@ -8,6 +8,7 @@
 #include <memory>
 
 #include <QElapsedTimer>
+#include <QFutureWatcher>
 #include <QHash>
 #include <QObject>
 #include <QPointer>
@@ -16,6 +17,7 @@
 #include <QStringList>
 #include <QUrl>
 #include <QVector>
+#include <QtConcurrent>
 
 #include <KisVersioningJob.h>
 #include <KisVersioningTypes.h>
@@ -111,6 +113,7 @@ struct LoreMemory {
 /// to live on.
 struct LoreSettings {
     QString identity;          ///< empty: the library's own (the session's, or the project's)
+    QString backupSuffix {QStringLiteral("~")};   ///< Krita's, as the application's settings hold it
     bool offline {false};      ///< tests only: every call runs as if there were no network
     std::shared_ptr<LoreMemory> memory;
 };
@@ -212,6 +215,20 @@ public:
     /// Starts one call. @p onDone runs after END, on this object's thread.
     void run(const LoreGlobals &globals, const LoreCall::Starter &starter, const EventHandler &onEvent,
              const DoneHandler &onDone);
+
+    /// Runs @p work on a worker thread, then @p then on this object's thread with its result: file
+    /// work never blocks the interface. @p work touches nothing but what it captured by value.
+    template<typename Result>
+    void onWorker(const std::function<Result()> &work, const std::function<void(const Result &)> &then)
+    {
+        auto *watcher = new QFutureWatcher<Result>(this);
+        connect(watcher, &QFutureWatcher<Result>::finished, this, [watcher, then]() {
+            const Result result = watcher->result();
+            watcher->deleteLater();
+            then(result);
+        });
+        watcher->setFuture(QtConcurrent::run(work));
+    }
 
     /// Asks lore_repository_status about the project. @p scan compares the files on disk with the
     /// current version; without it only what the library already knows is reported. On failure

@@ -13,11 +13,18 @@ namespace KisVersioning {
 
 /**
  * True for files that are never synchronised: Krita's autosave files and
- * its backup files. @p path is relative to the project root, with '/' as the
- * separator (a bare file name works too).
+ * its backup files, which end with @p backupSuffix (give it
+ * configuredBackupSuffix()). @p path is relative to the project root, with
+ * '/' as the separator (a bare file name works too).
  */
-KRITAVERSIONING_EXPORT bool isNeverSynced(const QString &path,
-                                          const QString &backupSuffix = QStringLiteral("~"));
+KRITAVERSIONING_EXPORT bool isNeverSynced(const QString &path, const QString &backupSuffix);
+
+/**
+ * The suffix Krita gives its backup files, as the artist set it in the
+ * application's settings ("~" unless changed). Read it on the interface thread
+ * and hand it to workers.
+ */
+KRITAVERSIONING_EXPORT QString configuredBackupSuffix();
 
 /**
  * The name of the copy kept when two people changed the same file, for

@@ -32,9 +32,9 @@ struct FolderContents {
 };
 
 /// Files never synchronised are not shown, nor anything in a hidden folder, where drivers keep their data.
-bool isShown(const QString &relativePath)
+bool isShown(const QString &relativePath, const QString &backupSuffix)
 {
-    if (relativePath.isEmpty() || isNeverSynced(relativePath)) {
+    if (relativePath.isEmpty() || isNeverSynced(relativePath, backupSuffix)) {
         return false;
     }
     const QStringList parts = relativePath.split(QLatin1Char('/'), Qt::SkipEmptyParts);
@@ -43,31 +43,31 @@ bool isShown(const QString &relativePath)
     });
 }
 
-void collect(const QDir &directory, const QString &prefix, FolderContents *contents)
+void collect(const QDir &directory, const QString &prefix, const QString &backupSuffix, FolderContents *contents)
 {
     const QFileInfoList entries = directory.entryInfoList(
         QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::NoSymLinks, QDir::Name);
     for (const QFileInfo &entry : entries) {
         const QString relative = prefix + entry.fileName();
-        if (!isShown(relative)) {
+        if (!isShown(relative, backupSuffix)) {
             continue;
         }
         if (entry.isDir()) {
             contents->folders << relative;
-            collect(QDir(entry.absoluteFilePath()), relative + QLatin1Char('/'), contents);
+            collect(QDir(entry.absoluteFilePath()), relative + QLatin1Char('/'), backupSuffix, contents);
         } else {
             contents->files << relative;
         }
     }
 }
 
-// Runs on a worker thread and touches nothing but its argument.
-FolderContents readProjectFolder(const QString &root)
+// Runs on a worker thread and touches nothing but its arguments.
+FolderContents readProjectFolder(const QString &root, const QString &backupSuffix)
 {
     FolderContents contents;
     contents.exists = !root.isEmpty() && QFileInfo(root).isDir();
     if (contents.exists) {
-        collect(QDir(root), QString(), &contents);
+        collect(QDir(root), QString(), backupSuffix, &contents);
         contents.markers = KisVersioningConflictMarkers(root).list();
     }
     return contents;
@@ -110,14 +110,14 @@ QString folderName(const QString &name)
 
 /// True when @p status shows work in @p folder (relative to the project) that is not on the
 /// server yet, or versions of the project that were not sent.
-bool hasUnsentWork(const ProjectStatus &status, const QString &folder)
+bool hasUnsentWork(const ProjectStatus &status, const QString &folder, const QString &backupSuffix)
 {
     if (status.pendingUpload > 0) {
         return true;
     }
     const QString folderKey = lookupKey(folder);
-    return std::any_of(status.files.begin(), status.files.end(), [&folderKey](const FileStatus &file) {
-        if (file.state == FileState::Unchanged || isNeverSynced(file.path)) {
+    return std::any_of(status.files.begin(), status.files.end(), [&folderKey, &backupSuffix](const FileStatus &file) {
+        if (file.state == FileState::Unchanged || isNeverSynced(file.path, backupSuffix)) {
             return false;
         }
         const QString key = lookupKey(cleanPath(file.path));
@@ -210,6 +210,8 @@ void ProjectsModel::refresh()
         refresh->releasedProjects = m_refresh->releasedProjects;
     }
     m_refresh = refresh;
+    // Read here, on the interface thread, for the workers and for everything this refresh shows.
+    m_backupSuffix = configuredBackupSuffix();
 
     const QString driverId = m_driver->id();
     const QVector<KisVersioningSettings::Project> stored = m_settings->projects();
@@ -258,7 +260,8 @@ void ProjectsModel::readFolder(const std::shared_ptr<Refresh> &refresh, int proj
         }
         stepDone(refresh);
     });
-    watcher->setFuture(QtConcurrent::run(readProjectFolder, refresh->projects[size_t(project)].entry.localPath));
+    watcher->setFuture(
+        QtConcurrent::run(readProjectFolder, refresh->projects[size_t(project)].entry.localPath, m_backupSuffix));
 }
 
 void ProjectsModel::askStatus(const std::shared_ptr<Refresh> &refresh, int project)
@@ -356,7 +359,7 @@ void ProjectsModel::askFolders(const std::shared_ptr<Refresh> &refresh, int proj
             const QStringList listed = job->result<QStringList>();
             for (const QString &folder : listed) {
                 const QString clean = cleanPath(folder).remove(QRegularExpression(QStringLiteral("^/+")));
-                if (isShown(clean) && !folders.contains(clean)) {
+                if (isShown(clean, m_backupSuffix) && !folders.contains(clean)) {
                     folders << clean;
                 }
             }
@@ -407,7 +410,7 @@ void ProjectsModel::apply(const Refresh &refresh)
         m_incoming += project.status.incoming;
         m_pendingUpload += project.status.pendingUpload;
         for (const FileStatus &file : project.status.files) {
-            if (file.state != FileState::Unchanged && isShown(file.path)) {
+            if (file.state != FileState::Unchanged && isShown(file.path, m_backupSuffix)) {
                 ++m_changedFiles;
             }
         }
@@ -460,7 +463,7 @@ std::unique_ptr<ProjectsModel::Node> ProjectsModel::buildProject(int index) cons
     }
     // A removed file is no longer on disk; it is listed from the status.
     for (const FileStatus &file : project.status.files) {
-        if (isShown(file.path)) {
+        if (isShown(file.path, m_backupSuffix)) {
             ensure(file.path, Node::FileNode)->state = file.state;
         }
     }
@@ -765,7 +768,7 @@ void ProjectsModel::untick(const Choice &choice, const QString &localPath)
             releaseAfterRefresh(id);
             return;
         }
-        if (hasUnsentWork(job->result<ProjectStatus>(), choice.folder)) {
+        if (hasUnsentWork(job->result<ProjectStatus>(), choice.folder, configuredBackupSuffix())) {
             Q_EMIT operationFailed(i18n("%1 has work that was not sent yet. Synchronize before removing it from your choice.",
                                         choice.folder));
             releaseAfterRefresh(id);

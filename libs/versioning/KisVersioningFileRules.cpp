@@ -5,6 +5,8 @@
 
 #include <QRegularExpression>
 
+#include <KConfigGroup>
+#include <KSharedConfig>
 #include <klocalizedstring.h>
 
 namespace KisVersioning {
@@ -20,6 +22,12 @@ bool isNeverSynced(const QString &path, const QString &backupSuffix)
         return true;
     }
     return !backupSuffix.isEmpty() && name.endsWith(backupSuffix);
+}
+
+QString configuredBackupSuffix()
+{
+    // The same entry, in the same group, as KisDocument reads when it makes a backup.
+    return KSharedConfig::openConfig()->group(QString()).readEntry("backupfilesuffix", QStringLiteral("~"));
 }
 
 QString conflictCopyName(const QString &fileName, const QString &userName, const QStringList &existingNames)

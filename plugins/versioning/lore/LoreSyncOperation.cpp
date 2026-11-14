@@ -95,6 +95,34 @@ DivergenceKind kindOf(const QDir &root, const QString &path)
     return DivergenceKind::BothModified;
 }
 
+/// What a worker that puts the artist's versions back found: the path it could not put back, or
+/// none, and the divergences it read from what is on disk.
+struct GivenBack {
+    bool ok = true;
+    QString failedPath;
+    QVector<Divergence> divergences;
+};
+
+/// Runs on a worker. For each path, when the library left the artist's own bytes in "~mine" (a
+/// text merge), they go back into the working file; @p onlyWithMarkers does it only when the
+/// working file holds the library's conflict markers. Then reads what each path is.
+GivenBack giveBackMine(const QString &projectPath, const QStringList &paths, bool onlyWithMarkers)
+{
+    GivenBack outcome;
+    const QDir root(projectPath);
+    for (const QString &path : paths) {
+        const QString file = root.filePath(path);
+        const QString mine = file + QLatin1String(mineSuffix);
+        if (QFileInfo::exists(mine) && (!onlyWithMarkers || hasConflictMarkers(file)) && !replaceFile(file, mine)) {
+            outcome.ok = false;
+            outcome.failedPath = path;
+            return outcome;
+        }
+        outcome.divergences.append({path, kindOf(root, path), QString()});
+    }
+    return outcome;
+}
+
 QString keepMineFailText(const QString &path)
 {
     return path.isEmpty()
@@ -213,9 +241,9 @@ private:
                 // Merged by the library on its own and not settled by the artist yet: an earlier
                 // synchronisation reported it and did not get to the end.
                 mergedByLore << file.path;
-            } else if (file.dirty && !file.conflict && !isNeverSynced(file.path)) {
+            } else if (file.dirty && !file.conflict && !isNeverSynced(file.path, settings().backupSuffix)) {
                 m_toStage << file.path;
-            } else if (file.staged && !file.merged && !file.conflict && !isNeverSynced(file.path)) {
+            } else if (file.staged && !file.merged && !file.conflict && !isNeverSynced(file.path, settings().backupSuffix)) {
                 // Prepared by an earlier synchronisation that did not create its version (cancelled,
                 // failed, or the application stopped in between). The library can report such a file
                 // as not dirty once the file on disk matches what was staged; it is still work to send.
@@ -238,23 +266,23 @@ private:
     /// Divergences of a merge still waiting for the artist: reported again, nothing is sent.
     void reportOpenDivergences(const QStringList &unresolved, const QStringList &mergedByLore)
     {
-        const QDir root(projectPath());
-        for (const QString &path : unresolved) {
-            // The library writes the text merge, markers included, into the working file. If an
-            // earlier synchronisation stopped before putting the artist's version back, do it now.
-            const QString mine = root.filePath(path) + QLatin1String(mineSuffix);
-            if (QFileInfo::exists(mine) && hasConflictMarkers(root.filePath(path))
-                && !replaceFile(root.filePath(path), mine)) {
-                fail(KisVersioningJob::Failed, keepMineFailText(path));
-                return;
-            }
-            m_result.divergences.append({path, kindOf(root, path), QString()});
-        }
-        for (const QString &path : mergedByLore) {
-            m_result.divergences.append({path, DivergenceKind::BothModified, QString()});
-        }
-        m_result.pendingUpload = true;
-        finish(QVariant::fromValue(m_result));
+        // The library writes the text merge, markers included, into the working file. If an
+        // earlier synchronisation stopped before putting the artist's version back, it goes back
+        // now, on a worker: the files can be large.
+        const QString project = projectPath();
+        onWorker<GivenBack>([project, unresolved]() { return giveBackMine(project, unresolved, true); },
+            [this, mergedByLore](const GivenBack &given) {
+                if (!given.ok) {
+                    fail(KisVersioningJob::Failed, keepMineFailText(given.failedPath));
+                    return;
+                }
+                m_result.divergences += given.divergences;
+                for (const QString &path : mergedByLore) {
+                    m_result.divergences.append({path, DivergenceKind::BothModified, QString()});
+                }
+                m_result.pendingUpload = true;
+                finish(QVariant::fromValue(m_result));
+            });
     }
 
     void stage()
@@ -464,7 +492,6 @@ private:
 
     void afterMerge(const LoreStatus &status)
     {
-        const QDir root(projectPath());
         int mergedFiles = 0;
         for (const LoreStatusFile &file : status.files) {
             if (!file.isFile) {
@@ -503,16 +530,18 @@ private:
 
         // Text both sides changed in the same lines: the library wrote its merge, with markers,
         // into the working file. The artist's own bytes are in "~mine" until the merge is
-        // committed; they go back into the working file now.
-        for (const QString &path : std::as_const(m_conflicts)) {
-            const QString mine = root.filePath(path) + QLatin1String(mineSuffix);
-            if (QFileInfo::exists(mine) && !replaceFile(root.filePath(path), mine)) {
-                abortMerge(path);
-                return;
-            }
-        }
-        m_restoreQueue = m_mergedByLore;
-        restoreNext();
+        // committed; they go back into the working file now, on a worker.
+        const QString project = projectPath();
+        const QStringList conflicts = m_conflicts;
+        onWorker<GivenBack>([project, conflicts]() { return giveBackMine(project, conflicts, false); },
+            [this](const GivenBack &given) {
+                if (!given.ok) {
+                    abortMerge(given.failedPath);
+                    return;
+                }
+                m_restoreQueue = m_mergedByLore;
+                restoreNext();
+            });
     }
 
     /// A file the library merged by itself gets the artist's own bytes back, from the version
@@ -547,15 +576,22 @@ private:
             },
             nullptr,
             [this, path, output](int status, const QString &rawText) {
-                const bool restored = status == 0 && replaceFile(QDir(projectPath()).filePath(path), output);
-                QFile::remove(output);
-                if (!restored) {
-                    qWarning("Lore: could not give back %s (status %d): %s", qUtf8Printable(path), status,
-                             qUtf8Printable(rawText));
-                    abortMerge(path);
-                    return;
-                }
-                restoreNext();
+                const QString target = QDir(projectPath()).filePath(path);
+                const bool written = status == 0;
+                onWorker<bool>([target, output, written]() {
+                        const bool restored = written && replaceFile(target, output);
+                        QFile::remove(output);
+                        return restored;
+                    },
+                    [this, path, status, rawText](const bool &restored) {
+                        if (!restored) {
+                            qWarning("Lore: could not give back %s (status %d): %s", qUtf8Printable(path), status,
+                                     qUtf8Printable(rawText));
+                            abortMerge(path);
+                            return;
+                        }
+                        restoreNext();
+                    });
             });
     }
 
@@ -671,13 +707,26 @@ private:
         if (stopIfCancelled()) {
             return;
         }
-        // A merged file takes the place of the working file, which is then kept as it is.
-        if (m_resolution == Resolution::MergedFile
-            && (m_mergedFile.isEmpty() || !replaceFile(QDir(projectPath()).filePath(m_path), m_mergedFile))) {
-            fail(KisVersioningJob::Failed, failText());
+        if (m_resolution == Resolution::MergedFile) {
+            // A merged file takes the place of the working file, which is then kept as it is. The
+            // copy runs on a worker.
+            if (m_mergedFile.isEmpty()) {
+                fail(KisVersioningJob::Failed, failText());
+                return;
+            }
+            const QString target = QDir(projectPath()).filePath(m_path);
+            const QString merged = m_mergedFile;
+            const bool unresolved = entry->unresolved;
+            onWorker<bool>([target, merged]() { return replaceFile(target, merged); },
+                [this, unresolved](const bool &replaced) {
+                    if (!replaced) {
+                        fail(KisVersioningJob::Failed, failText());
+                        return;
+                    }
+                    settleKept(unresolved);
+                });
             return;
         }
-
         if (m_resolution == Resolution::Theirs) {
             // In a merge with the server the library's "mine" is the server's side (the merge's
             // first parent): it writes the server's version into the working file and stages it,
@@ -689,7 +738,15 @@ private:
                 args.paths = paths;
                 lore_branch_merge_resolve_mine_async(globals, &args, callback);
             }));
-        } else if (entry->unresolved) {
+        } else {
+            settleKept(entry->unresolved);
+        }
+    }
+
+    /// Settles the path with the working file as it is.
+    void settleKept(bool unresolved)
+    {
+        if (unresolved) {
             // Marks it settled with the working file as it is.
             settle(withPaths({m_path}, [](const lore_global_args_t *globals, lore_event_callback_config_t callback,
                                          lore_string_array_t paths) {

@@ -63,7 +63,7 @@ bool ProjectsPresence::locate(const QString &absolutePath, QString *projectPath,
             continue;
         }
         const QString relative = file.mid(root.endsWith(QLatin1Char('/')) ? root.size() : root.size() + 1);
-        if (isNeverSynced(relative)) {
+        if (isNeverSynced(relative, configuredBackupSuffix())) {
             return false;
         }
         *projectPath = project.localPath;

@@ -33,13 +33,13 @@ const char unknownOwner[] = "<unknown>";
 
 /// True when this computer has work the server does not have: a change on disk or prepared for a
 /// version, a version not sent, or a merge not finished.
-bool hasLocalWork(const LoreStatus &status)
+bool hasLocalWork(const LoreStatus &status, const QString &backupSuffix)
 {
     if (status.localAhead) {
         return true;
     }
-    return std::any_of(status.files.begin(), status.files.end(), [](const LoreStatusFile &file) {
-        return file.isFile && !isNeverSynced(file.path) && (file.dirty || file.staged || file.conflict);
+    return std::any_of(status.files.begin(), status.files.end(), [&backupSuffix](const LoreStatusFile &file) {
+        return file.isFile && !isNeverSynced(file.path, backupSuffix) && (file.dirty || file.staged || file.conflict);
     });
 }
 
@@ -193,6 +193,7 @@ LoreSettings LoreDriver::settings() const
     settings.identity = m_testIdentity.isEmpty() ? m_identity : m_testIdentity;
     settings.offline = m_offline;
     settings.memory = m_memory;
+    settings.backupSuffix = configuredBackupSuffix();
     return settings;
 }
 
@@ -468,10 +469,15 @@ KisVersioningJob *LoreDriver::downloadProject(const ProjectInfo &project, const 
                 },
                 [op, viewFolder, target, existed, leftOut, failText](int status, const QString &rawText) {
                     if (status != 0) {
-                        if (!existed) {
-                            QDir(target).removeRecursively();
+                        if (existed) {
+                            op->failFromLore("download", status, rawText, failText);
+                            return;
                         }
-                        op->failFromLore("download", status, rawText, failText);
+                        // What the failed download left goes, on a worker, before the job ends.
+                        op->onWorker<bool>([target]() { return QDir(target).removeRecursively(); },
+                            [op, status, rawText, failText](const bool &) {
+                                op->failFromLore("download", status, rawText, failText);
+                            });
                         return;
                     }
                     op->setFlushBeforeEnd(true);
@@ -552,7 +558,7 @@ KisVersioningJob *LoreDriver::setFolders(const QString &localPath, const QString
             if (op->stopIfCancelled()) {
                 return;
             }
-            if (hasLocalWork(status)) {
+            if (hasLocalWork(status, op->settings().backupSuffix)) {
                 op->fail(KisVersioningJob::Failed, i18n("Synchronize the project before changing its folders."));
                 return;
             }
@@ -633,7 +639,7 @@ KisVersioningJob *LoreDriver::status(const QString &localPath)
             for (const LoreStatusFile &file : status.files) {
                 // Files only staged by a merge came from the server; the rest are this computer's.
                 const bool local = file.dirty || (file.staged && !file.merged) || file.unresolved;
-                if (!file.isFile || !local || isNeverSynced(file.path)) {
+                if (!file.isFile || !local || isNeverSynced(file.path, op->settings().backupSuffix)) {
                     continue;
                 }
                 FileStatus entry;
